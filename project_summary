@@ -1,0 +1,42 @@
+Le problème
+
+Tu dois protéger un site (une emprise à surveiller, avec des zones plus ou moins critiques) avec un nombre limité de capteurs. Chaque capteur a :
+
+une position candidate (toit, mât, sol) ;
+une hauteur ;
+un modèle de détection : une caméra a une portée, un champ de vision et une orientation ; un radar a une portée, une couverture sur 360° et un masque d'élévation.
+
+L'objectif est de maximiser la couverture pondérée de la zone sous contrainte de budget. Formellement, c'est un problème de couverture maximale (Maximal Covering Location Problem, MCLP), NP-difficile, bien documenté en recherche opérationnelle. Ton mémoire te met en terrain connu.
+
+Ce qui rend le projet solide plutôt que scolaire
+
+1. Exploiter la 3D, pas seulement un MNS.
+Avec un simple modèle numérique de surface, un arbre bloque la vue comme un mur. Avec le nuage classé, tu peux traiter les bâtiments comme opaques et la végétation comme semi-transparente, avec une atténuation qui dépend de la densité de points traversée. Tu obtiens alors une probabilité de détection plutôt qu'un simple visible/invisible. C'est un vrai apport du LiDAR, et c'est là que tu te distingues.
+
+2. Évaluer contre un intrus, pas seulement en pourcentage de couverture.
+Couvrir 95 % de la surface ne sert à rien s'il reste un couloir non surveillé. Pour tester chaque configuration, tu calcules le chemin d'intrusion le moins détecté : un Dijkstra sur une carte de coût égale à la probabilité de détection, de l'extérieur jusqu'à la zone critique. La métrique clé devient la probabilité de détection sur le pire chemin. Tu peux ensuite itérer : l'optimiseur place les capteurs, l'intrus trouve la faille, l'optimiseur corrige. C'est exactement le raisonnement d'un ingénieur sécurité.
+
+3. Mettre le deep learning là où il apporte vraiment quelque chose.
+Le goulot d'étranglement est le calcul des viewsheds : une position candidate × plusieurs hauteurs × plusieurs orientations, cela fait des milliers de calculs. Tu entraînes un modèle de substitution (surrogate), par exemple un U-Net, qui prend en entrée un patch local du MNS, la densité de végétation et la hauteur de l'observateur, et qui prédit la carte de visibilité. Tu mesures ensuite le compromis entre accélération et précision (IoU par rapport au viewshed exact). Cela te donne un vrai argument ML, justifié par une contrainte d'ingénierie et non plaqué artificiellement.
+
+Méthodes d'optimisation à comparer
+Glouton : la couverture est sous-modulaire, donc l'algorithme glouton a une garantie théorique d'approximation de (1 − 1/e). C'est une excellente baseline.
+Programmation linéaire en nombres entiers (PuLP ou OR-Tools) : donne l'optimum exact sur de petites instances, utile pour mesurer l'écart des heuristiques.
+NSGA-II (pymoo) : optimisation multi-objectif (coût, couverture, redondance k-couverture, détection sur le pire chemin). Tu obtiens un front de Pareto, très parlant pour un décideur.
+Données et outils
+Données : nuages LiDAR HD classés, plus MNT et MNS. Utilise les rasters dérivés de l'IGN s'ils existent sur ta zone, sinon génère-les avec PDAL. La BD TOPO fournit les emprises de bâtiments, les routes et chemins (axes d'approche probables) et les positions candidates.
+Stack : PDAL et laspy, rasterio, numpy et numba pour un moteur de viewshed maison (ou gdal_viewshed pour valider), networkx ou scikit-image pour les chemins, pymoo et OR-Tools, PyTorch.
+Démo : une application Streamlit avec une carte 2D (pydeck), où l'on règle le budget et le type de capteurs et où l'on voit la couverture et le chemin d'intrusion se mettre à jour. Tu peux ajouter une vue 3D si tu as le temps.
+Choix du site
+
+Prends un site non sensible : un port de commerce, un site industriel, un campus ou un stade. Évite de publier des cartes d'angles morts d'un site réel sensible (centrale, emprise militaire). Au-delà du problème éthique, un recruteur défense le remarquerait immédiatement, et pas en bien. Tu peux mentionner ce choix dans ton README : c'est un signal de maturité.
+
+Plan sur environ 8 semaines
+Semaine	Contenu
+1	Choix du site, téléchargement des tuiles, rasters MNT/MNS/densité de végétation, positions candidates
+2	Moteur de viewshed exact + modèles de capteurs, validation contre GDAL
+3	Baselines glouton et MILP, métriques de couverture
+4	Évaluation par l'intrus (pire chemin) + NSGA-II multi-objectif
+5–6	Surrogate deep learning : génération du dataset, entraînement, étude accélération/précision
+7	Boucle adversariale optimiseur ↔ intrus, analyse de sensibilité (saison, hauteur des mâts)
+8	Démo Streamlit, README, article de blog

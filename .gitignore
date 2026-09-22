@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Conda
+.conda/
+
+# VS Code
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Raw data
+data/raw/*
+!data/raw/.gitkeep
+
+# Intermediate data
+data/interim/*
+!data/interim/.gitkeep
+
+# Processed datasets
+data/processed/*
+!data/processed/.gitkeep
+
+# Outputs
+outputs/models/*
+outputs/logs/*
+
+# OS
+.DS_Store
+
+# Environment variables
+.env

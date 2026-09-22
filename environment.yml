@@ -1,0 +1,20 @@
+name: lidar-project
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+  - pdal
+  - python-pdal
+  - laspy
+  - rasterio
+  - geopandas
+  - numpy
+  - numba
+  - scipy
+  - pandas
+  - matplotlib
+  - scikit-learn
+  - jupyterlab
+  - pyyaml
