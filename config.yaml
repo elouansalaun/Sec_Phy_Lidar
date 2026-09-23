@@ -91,6 +91,7 @@ optimisation:
     min: 2.0
     max: 30.0
     pas: 1.0
+  analyse_budgets: [4, 13, 30]  # budgets cartographiés par src.analyse
   milp:                        # coupes sous-modulaires multi-blocs (src/milp.py)
     bloc_m: 10.0                 # côté des blocs spatiaux : plus petit = coupes plus fortes, maître plus gros
     ecart_cible: 5.0e-3          # arrêt quand (UB − LB) / UB ≤ 0,5 %
