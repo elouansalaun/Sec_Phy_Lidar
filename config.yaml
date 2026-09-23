@@ -80,3 +80,19 @@ sensors:
 coverage:
   p_min: 0.01                    # P < p_min -> 0 dans la matrice creuse (perte mesurée)
   out_dir: "data/processed/coverage"
+
+
+optimisation:
+  out_dir: "data/processed/optim"
+  capacite_support:            # nombre max de capteurs par support (c, h)
+    radar: 1
+    camera: 4
+  p_clip: 0.999                # plafond de P avant ln(1 - P)
+  budget:
+    min: 2.0
+    max: 30.0
+    pas: 1.0
+  milp:
+    tangentes_s: [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0]
+    time_limit_s: 300
+    mip_rel_gap: 1.0e-3
