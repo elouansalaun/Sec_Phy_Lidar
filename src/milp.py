@@ -120,7 +120,7 @@ class MilpResult:
     cost: float
     iterations: int
     time_s: float
-    converged: bool
+    converged: bool          # écart ≤ gap_tol (sinon : limite de temps ou stagnation)
     history: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     @property
@@ -175,8 +175,14 @@ def solve(inst: Instance, budget: float, groups: np.ndarray, seeds=(),
         if verbose:
             print(f"  it {it:3d} | {hist[-1]['temps_s']:6.1f} s | UB {ub / inst.W:.4f} "
                   f"| LB {best_v / inst.W:.4f} | écart {100 * gap:.2f} %", flush=True)
-        if gap <= gap_tol or not new:                  # T déjà coupé -> maître exact en T
+        if gap <= gap_tol:
             converged = True
+            break
+        if not new:
+            # T déjà coupé : si le maître a prouvé son optimum (status 0, à mip_rel_gap près),
+            # UB = F(T) et T est optimal. Sinon, le maître s'est arrêté sur sa limite de temps
+            # et renverra la même solution : on arrête sans prétendre avoir convergé.
+            converged = res.status == 0
             break
         if time.perf_counter() - t0 > max_time_s:
             break
