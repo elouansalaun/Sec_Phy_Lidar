@@ -60,9 +60,8 @@ candidates:
 
 
 
-viewshield:
+viewshed:
   radius_m: 400            # portée max des capteurs (= study_buffer_m)
   target_height_m: 1.0     # centre du torse d'un intrus debout
-  step_px: 0.5             # pas d'échantillonnage du rayon (Nyquist sur la grille)
   veg_min_h_m: 0.3         # sous ce seuil, "autre" = sol (herbe, bordures)
-  out_dir: "data/processed/viewshields"
+  out_dir: "data/processed/viewshed"

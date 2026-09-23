@@ -1,11 +1,11 @@
 """
-src/viewshield.py — Épaisseur optique τ de la ligne de visée (moteur exact R3).
+src/viewshed.py — Épaisseur optique τ de la ligne de visée (moteur exact R3).
 
 Modèle : terrain + bâtiments opaques ; végétation semi-transparente (Beer-Lambert),
          k = -ln(P_gap) / h_veg, P_gap mesurée sur les premiers retours LiDAR.
 Sortie : τ par cellule. NaN = hors portée, inf = bloqué, T = exp(-τ) sinon.
 
-Usage  : python -m src.viewshield C040 4
+Usage  : python -m src.viewshed C040 4
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def read(path) -> np.ndarray:
 
 
 def prepare_surfaces(cfg: dict) -> Surfaces:
-    v, d = cfg["viewshield"], ROOT / cfg["rasters"]["out_dir"]
+    v, d = cfg["viewshed"], ROOT / cfg["rasters"]["out_dir"]
     grid = load_grid(ROOT / cfg["site"]["grid_yaml"])
     mnt, bati_h, autre_h, gap = (read(d / f"{n}.tif")
                                  for n in ("mnt", "bati_h", "autre_h", "gap_fraction"))
@@ -58,41 +58,57 @@ def prepare_surfaces(cfg: dict) -> Surfaces:
 
 
 # =============================================================================
-# Étape 2 — Noyau : un rayon exact vers chaque cellule du disque (R3)
+# Étape 2 — Noyau : parcours exact des cellules traversées (Amanatides & Woo 1987)
+#           Surface en prismes ; τ = Σ k · longueur 3D sous la canopée, par cellule
 # =============================================================================
+@njit(cache=True)
+def ray_tau(z_opaque, z_veg, k_ext, r0, c0, z_obs, r, c, z_t, res):
+    """τ le long du segment observateur -> cible ; inf si un prisme opaque est touché."""
+    dr, dc = r - r0, c - c0
+    step_r = 1 if dr > 0 else -1
+    step_c = 1 if dc > 0 else -1
+    td_r = abs(1.0 / dr) if dr != 0 else np.inf        # Δt pour franchir une ligne
+    td_c = abs(1.0 / dc) if dc != 0 else np.inf        # Δt pour franchir une colonne
+    tm_r, tm_c = 0.5 * td_r, 0.5 * td_c                # premier bord à 0,5 px du centre
+    dz = z_t - z_obs
+    L = np.sqrt((dr * dr + dc * dc) * res * res + dz * dz)   # longueur 3D totale [m]
+    cr, cc, t_in, tau = r0, c0, 0.0, 0.0
+    while True:
+        t_out = min(tm_r, tm_c, 1.0)
+        if not (cr == r0 and cc == c0) and not (cr == r and cc == c):
+            za, zb = z_obs + dz * t_in, z_obs + dz * t_out  # rayon à l'entrée / la sortie
+            lo, hi = min(za, zb), max(za, zb)
+            if lo < z_opaque[cr, cc]:
+                return np.inf
+            zv = z_veg[cr, cc]
+            if lo < zv:                                      # passage (partiel) sous la canopée
+                frac = 1.0 if hi <= zv else (zv - lo) / (hi - lo)
+                tau += k_ext[cr, cc] * frac * (t_out - t_in) * L
+        if t_out >= 1.0:
+            return tau
+        if tm_r < tm_c:
+            cr += step_r; t_in = tm_r; tm_r += td_r
+        elif tm_c < tm_r:
+            cc += step_c; t_in = tm_c; tm_c += td_c
+        else:                                                # passage exact par un coin
+            cr += step_r; cc += step_c; t_in = tm_r; tm_r += td_r; tm_c += td_c
+
+
 @njit(parallel=True, cache=True)
-def optical_depth(z_opaque, z_veg, k_ext, z_tgt, r0, c0, z_obs, radius_px, res, step):
+def optical_depth(z_opaque, z_veg, k_ext, z_tgt, r0, c0, z_obs, radius_px, res):
+    """τ par cellule du disque. NaN = hors portée, inf = bloqué."""
     H, W = z_opaque.shape
-    tau = np.full((H, W), np.nan, np.float32)            # NaN = hors portée
+    tau = np.full((H, W), np.nan, np.float32)
     for r in prange(max(r0 - radius_px, 0), min(r0 + radius_px + 1, H)):
         for c in range(max(c0 - radius_px, 0), min(c0 + radius_px + 1, W)):
             dr, dc = r - r0, c - c0
-            d = np.sqrt(dr * dr + dc * dc)
             zt = z_tgt[r, c]
-            if d > radius_px or np.isnan(zt):
+            if dr * dr + dc * dc > radius_px * radius_px or np.isnan(zt):
                 continue
-            if d == 0:
+            if dr == 0 and dc == 0:
                 tau[r, c] = 0.0
                 continue
-            dz = zt - z_obs
-            seg = step * res * np.sqrt(1.0 + (dz / (d * res)) ** 2)   # longueur 3D d'un pas [m]
-            acc = 0.0
-            blocked = False
-            for i in range(1, int(d / step) + 1):
-                s = i * step / d                                    # fraction du trajet
-                rr = int(np.floor(r0 + s * dr + 0.5))
-                cc = int(np.floor(c0 + s * dc + 0.5))
-                if rr == r and cc == c:
-                    break                                           # cible atteinte
-                if rr == r0 and cc == c0:
-                    continue                                        # pixel du mât lui-même
-                z = z_obs + s * dz
-                if z < z_opaque[rr, cc]:
-                    blocked = True
-                    break
-                if z < z_veg[rr, cc]:
-                    acc += k_ext[rr, cc] * seg
-            tau[r, c] = np.inf if blocked else acc
+            tau[r, c] = ray_tau(z_opaque, z_veg, k_ext, r0, c0, z_obs, r, c, zt, res)
     return tau
 
 
@@ -104,10 +120,10 @@ def to_pixel(grid: Grid, x: float, y: float) -> tuple[int, int]:
 
 
 def compute_tau(s: Surfaces, x: float, y: float, z_obs: float, cfg: dict) -> np.ndarray:
-    v, g = cfg["viewshield"], s.grid
+    v, g = cfg["viewshed"], s.grid
     r0, c0 = to_pixel(g, x, y)
     return optical_depth(s.z_opaque, s.z_veg, s.k_ext, s.z_tgt, r0, c0, z_obs,
-                         int(v["radius_m"] / g.res), g.res, v["step_px"])
+                         int(v["radius_m"] / g.res), g.res)
 
 
 # =============================================================================
@@ -143,7 +159,7 @@ def main() -> None:
               f"{100 * (fin & (T < 0.01)).mean():>5.1f}% "
               f"{100 * ((T >= 0.01) & (T < 0.5)).mean():>5.1f}% {100 * (T >= 0.5).mean():>5.1f}%")
 
-    out = ROOT / cfg["viewshield"]["out_dir"]
+    out = ROOT / cfg["viewshed"]["out_dir"]
     out.mkdir(parents=True, exist_ok=True)
     write_raster(out / f"T_{cand_id}_{h:.0f}m.tif", np.exp(-t64), s.grid)
     print(f"  -> {out / f'T_{cand_id}_{h:.0f}m.tif'}")

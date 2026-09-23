@@ -7,7 +7,7 @@ Usage : python -m pytest tests -v
 import numpy as np
 import pytest
 
-from src.viewshield import optical_depth      
+from src.viewshed import optical_depth      
 
 N, R0, C0, RES, STEP, RADIUS = 121, 60, 60, 1.0, 0.5, 60
 
@@ -18,7 +18,7 @@ def flat(v: float = 0.0) -> np.ndarray:
 
 def los(z_opaque, z_veg, k, z_tgt, h):
     return optical_depth(z_opaque, z_veg, k, z_tgt, R0, C0, h,
-                         RADIUS, RES, STEP).astype(np.float64)
+                         RADIUS, RES).astype(np.float64)
 
 
 # -----------------------------------------------------------------------------
@@ -55,13 +55,12 @@ def test_ombre_mur():
 def test_dalle_vegetation():
     h, t, k = 3.0, 1.0, 0.1
     tau = los(flat(), flat(50.0), flat(k), flat(t), h)
-    for D in (5, 20, 50):                                    # axe des colonnes : exact
+    for D in (5, 20, 50):                                    # axe : D - 1 cellules pleines
         attendu = k * (D - 1) * np.sqrt(1 + ((t - h) / D) ** 2)
         assert tau[R0, C0 + D] == pytest.approx(attendu, rel=1e-5)
-    n = 30                                                   # diagonale : isotropie
-    d = n * np.sqrt(2)
-    attendu = k * (d - 1) * np.sqrt(1 + ((t - h) / d) ** 2)
-    assert tau[R0 + n, C0 + n] == pytest.approx(attendu, abs=1.5 * k)
+    n = 30                                                   # diagonale : n - 1 cellules
+    attendu = k * (n - 1) / n * np.sqrt(2 * n**2 + (t - h) ** 2)
+    assert tau[R0 + n, C0 + n] == pytest.approx(attendu, rel=1e-5)
 
 
 # -----------------------------------------------------------------------------
@@ -72,9 +71,10 @@ def test_dalle_vegetation():
 def test_dalle_partielle():
     h, t, k, Hv, D = 21.0, 1.0, 0.1, 5.0, 40
     tau = los(flat(), flat(Hv), flat(k), flat(t), h)
-    horiz = D * (Hv - t) / (h - t) - 1                       # 8 m dans la couche - pixel cible
-    attendu = k * horiz * np.sqrt(1 + ((t - h) / D) ** 2)
-    assert tau[R0, C0 + D] == pytest.approx(attendu, abs=0.5 * k)
+    t_entree = (h - Hv) / (h - t)                            # le rayon passe sous Hv
+    t_cible = (D - 0.5) / D                                  # bord de la cellule cible
+    attendu = k * (t_cible - t_entree) * np.sqrt(D**2 + (h - t) ** 2)
+    assert tau[R0, C0 + D] == pytest.approx(attendu, rel=1e-5)
 
 
 # -----------------------------------------------------------------------------

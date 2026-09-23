@@ -249,3 +249,84 @@ résultats. Ils sont conservés et signalés ; l'optimiseur décidera.
 ---
 
 *Données : © Gouvernement du Québec, MRNF, licence CC BY 4.0.*
+
+
+## Validation du moteur de visibilité
+
+Le moteur calcule, pour chaque couple (position, hauteur), l'épaisseur optique τ
+de la ligne de visée vers chaque cellule dans un rayon de 400 m : τ = ∞ si un
+prisme opaque (terrain, bâti) est touché, τ = Σ k·ℓ sinon (Beer-Lambert dans la
+végétation). Parcours exact des cellules traversées (Amanatides & Woo, 1987),
+compilé avec numba : ~16 ms par calcul sur 5·10⁵ cellules.
+
+### 1. Tests analytiques — `tests/test_viewshed.py`
+
+Cinq terrains synthétiques à solution exacte, chacun isolant un terme du modèle :
+terrain plat (géométrie du disque), mur (longueur d'ombre par Thalès), dalle de
+végétation infinie (τ = k × longueur 3D, axe et diagonale), dalle partielle
+(entrée du rayon dans la canopée), exclusion du pixel du mât. Tolérance
+relative 10⁻⁵ : le parcours exact reproduit les formules à la précision float32.
+
+### 2. Comparaison externe à `gdal_viewshed`
+
+**Protocole.** Même surface (MNS entièrement opaque), mêmes hauteurs observateur
+et cible (1,0 m), courbure désactivée (`-cc 0` ; d²/2R = 1,3 cm à 400 m),
+observateur au centre de cellule. Seule différence : l'algorithme (parcours exact
+ici ; interpolation de l'horizon de Wang, Robinson & White 2000 dans GDAL).
+144 couples comparés. 32 couples exclus : capteur sous le MNS (mât dans la
+végétation), cas qu'un outil 2,5D ne peut pas représenter et que ce moteur traite
+par semi-transparence.
+
+**Critères fixés avant l'expérience et résultats**
+
+| Critère | Seuil | Résultat |
+|---|---|---|
+| κ de Cohen médian | ≥ 0,85 | 0,870 ✅ |
+| IoU médian des zones visibles | ≥ 0,85 | 0,779 ❌ |
+| Désaccords à ≤ 2 px d'une frontière | ≥ 80 % | 86,1 % ✅ |
+
+IoU agrégé (pondéré par la surface visible) : [0,804].
+
+### 3. Analyse de l'échec sur l'IoU
+
+| Hypothèse | Test | Verdict |
+|---|---|---|
+| Effet de taille : l'IoU est instable pour les petites zones visibles | ρ(IoU, part visible) = [0,79] ; IoU médian de [0,598] (< 0,5 % visible) à [0,820] (> 5 %) | Confirmée : explique la queue, pas le plateau |
+| Rayons rasants (capteur à peine au-dessus du MNS) | ρ(κ, hauteur au-dessus du MNS) = [−0,22] | Rejetée |
+| Décalage uniforme de l'horizon entre les moteurs | IoU en fonction d'une tolérance ε : non monotone | Rejetée |
+| Obstacle au voisinage immédiat du mât | 1 % des désaccords > 1 m dus à un obstacle à < 3 m | Rejetée |
+| **Un des deux moteurs est inexact** | **Arbitre exact** sur les cellules de désaccord | **Confirmée — voir ci-dessous** |
+
+**Arbitre exact.** Pour le modèle de surface en prismes (chaque pixel = prisme de
+hauteur MNS), la visibilité a une solution exacte : parcourir toutes les cellules
+traversées par le segment et comparer le point le plus bas du rayon dans chaque
+cellule au sommet du prisme. Appliqué aux cellules de désaccord :
+
+- **GDAL** : 100 % des cellules qu'il est seul à voir sont en réalité masquées.
+  Son interpolation de l'horizon « fait fuir » la visibilité par-dessus les
+  obstacles, ce qui surestime la zone visible d'environ 15 % (cas médian).
+- **Version initiale de ce moteur** (échantillonnage du rayon tous les 0,5 px) :
+  17 à 26 % des cellules qu'il était seul à voir étaient masquées, parce que
+  l'échantillonnage manquait les cellules effleurées par un coin. Soit environ 1 %
+  de faux visible. **Corrigé** en remplaçant l'échantillonnage par le parcours
+  exact, qui donne aussi la longueur exacte traversée dans la végétation et
+  divise le temps de calcul par 1,7. Après correction, accord de 100 % avec
+  l'arbitre.
+
+**Conclusion.** L'écart résiduel avec GDAL vient de l'approximation de GDAL, pas
+d'une erreur de ce moteur. Le critère d'IoU ≥ 0,85 était mal calibré : la
+variabilité entre algorithmes de visibilité est connue (Fisher, 1993) et plus
+forte que ce que j'avais anticipé en tissu urbain dense. Le modèle en prismes est
+le plus conservateur des deux (il épaissit les obstacles jusqu'à un pixel) : il
+sous-estime la couverture plutôt que de la surestimer, ce qui est le bon côté de
+l'erreur pour un système de sûreté.
+
+### Limites
+
+- Résolution de 1 m : la géométrie sous le pixel (bords de toits, cimes) n'est pas
+  représentée. Le modèle en prismes est une borne conservative.
+- Végétation : couche homogène du sol au sommet (pas de base de houppier), angle
+  des feuilles supposé sphérique (G = 0,5), acquisition sans feuilles
+  (novembre 2023) : les transmittances sont optimistes pour l'été.
+- Le mode de validation traite la végétation comme opaque. La semi-transparence
+  est validée seulement par les tests analytiques, faute de référence externe.
