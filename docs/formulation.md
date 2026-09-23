@@ -21,14 +21,13 @@ Ce document est la spécification mathématique de la semaine 3. Il sert de réf
 | $B$ | budget | `optimisation.budget` |
 | $K_\kappa$ | capacité d'un support pour le type $\kappa$ (1 radar, 4 caméras) | `optimisation.capacite_support` |
 
-Les valeurs $P_{ij} < p_{\min}$ ont été mises à zéro à la semaine 2 (`coverage.p_min`, perte mesurée : 0,011 % du poids). Avant tout logarithme, on plafonne $P_{ij} \le p_{\text{clip}} = 0{,}999$ (`optimisation.p_clip`).
+Les valeurs $P_{ij} < p_{\min}$ ont été mises à zéro à la semaine 2 (`coverage.p_min`, perte mesurée : 0,011 % du poids). 
 
 ## 2. Variables de décision
 
 - $x_j \in \{0,1\}$ : la configuration $j$ est installée.
 - $y_s \in \{0,1\}$ : le support $s$ est construit.
-- $\sigma_i \ge 0$ : « exposition » de la cellule $i$ (définie en §4).
-- $z_i \in [0,1]$ : probabilité de détection de la cellule $i$, dans sa version linéarisée.
+- $\eta_g \ge 0$ : majorant de la couverture pondérée du bloc $g$ dans le problème maître (§4.2).
 
 ## 3. Modèle exact
 
@@ -80,78 +79,82 @@ Grâce au facteur $y_s$, (C4) implique déjà (C2) pour des solutions entières.
 2. **Visibilité statique.** $P_{ij}$ provient d'un MNS figé au moment du vol LiDAR : ni végétation saisonnière ni véhicules stationnés.
 3. **Espérance et non pire cas.** On maximise la détection moyenne pondérée. Un adversaire qui connaît le dispositif choisit son chemin : c'est la question de la couverture de chemins, hors du périmètre de cette semaine.
 
-## 4. Linéarisation exacte de l'objectif
+## 4. Résolution exacte
 
-### 4.1 Passage au logarithme
+### 4.1 Modèle compact à coupes tangentes : correct mais intraitable
 
-On pose $\lambda_{ij} = -\ln(1 - P_{ij}) \ge 0$. Ce paramètre est fini grâce au plafonnement $p_{\text{clip}}$, et $\lambda_{ij} = 0$ lorsque $P_{ij} = 0$, ce qui conserve le caractère creux de la matrice. On définit ensuite
-
-$$
-\sigma_i = \sum_{j \in J} \lambda_{ij} \, x_j.
-$$
-
-**Identité.** Pour tout $x \in \{0,1\}^{J}$,
+La première idée consiste à linéariser directement l'objectif. On pose $\lambda_{ij} = -\ln(1 - \min(P_{ij}, 0{,}999))$ et $\sigma_i = \sum_j \lambda_{ij} x_j$. On a alors l'identité exacte $\prod_j (1 - P_{ij})^{x_j} = e^{-\sigma_i}$. Comme $g(\sigma) = 1 - e^{-\sigma}$ est concave, on la majore par des tangentes :
 
 $$
-\prod_j (1 - P_{ij})^{x_j} = \exp\Big( \sum_j x_j \ln(1 - P_{ij}) \Big) = \exp(-\sigma_i),
+z_i \le 1 - e^{-\sigma_k} + e^{-\sigma_k}(\sigma_i - \sigma_k) \quad \forall i, k.
 $$
 
-et donc $F(x) = \sum_i w_i \big(1 - e^{-\sigma_i}\big)$. L'égalité est **exacte**, sans approximation : la non-linéarité est entièrement reportée dans la fonction scalaire $g(\sigma) = 1 - e^{-\sigma}$, tandis que $\sigma_i$ est linéaire en $x$.
+Avec 10 points de tangence, la surestimation reste inférieure à 0,010 par cellule. Le modèle donne donc une borne supérieure valide.
 
-### 4.2 Coupes tangentes
+**Mesures sur le site** (B = 12, HiGHS, 4 cœurs) :
 
-La fonction $g$ est concave : $g''(\sigma) = -e^{-\sigma} < 0$. Toute tangente à $g$ la majore donc. Pour une liste de points $0 = \sigma_0 < \sigma_1 < \dots < \sigma_{K-1}$ (`optimisation.milp.tangentes_s`) :
+| Grandeur | Valeur |
+|---|---|
+| Taille | 113 356 lignes × 23 376 colonnes, **3,26 M non-nuls** (ceux de $A$) |
+| Branch-and-bound | aucune solution réalisable trouvée en 150 s |
+| Relaxation continue (simplexe) | non résolue en 150 s |
+| Relaxation continue (point intérieur) | 84 s, borne **0,927**, avec des fractions de capteur sur 31 configurations |
+| Meilleure solution connue (glouton) | 0,680 |
 
-$$
-z_i \le 1 - e^{-\sigma_k} + e^{-\sigma_k} (\sigma_i - \sigma_k) \qquad \forall i \in I,\ \forall k,
-\qquad z_i \le 1.
-$$
+Chaque nœud de l'arbre coûte plus d'une minute, et la borne à la racine laisse un écart de 36 %. Le problème vient de la relaxation elle-même : des fractions $x_j = 0{,}3$ réparties sur de nombreuses configurations « voient » presque tout le site. **Modèle rejeté.**
 
-La tangente en $\sigma_0 = 0$ se réduit à $z_i \le \sigma_i$.
+### 4.2 Décomposition par coupes sous-modulaires multi-blocs
 
-Le programme linéaire en nombres entiers résolu est :
-
-$$
-\text{(MILP)} \quad \max \sum_i w_i z_i \quad \text{s.c. (C1)–(C4), définition de } \sigma_i, \text{ coupes tangentes}, \ x, y \text{ binaires}.
-$$
-
-### 4.3 Pourquoi c'est une borne supérieure
-
-Soit $x$ une solution réalisable du modèle exact. En prenant $z_i = g(\sigma_i(x))$, toutes les coupes sont satisfaites, puisque chaque tangente majore $g$. Ce choix de $(x, z)$ est donc réalisable pour le MILP, et sa valeur vaut $F(x)$. Il s'ensuit que $\mathrm{OPT}_{\text{MILP}} \ge \max_x F(x) = \mathrm{OPT}$.
-
-Inversement, pour la solution $\hat{x}$ renvoyée par le MILP, on calcule **exactement** $F(\hat{x})$. C'est une borne inférieure, puisque $\hat{x}$ est réalisable. On obtient l'encadrement
+On découpe les cellules en blocs spatiaux $g$, des carrés de `optimisation.milp.bloc_m` de côté, et on écrit $F = \sum_g F_g$ avec
 
 $$
-F(\hat{x}) \;\le\; \mathrm{OPT} \;\le\; \overline{\mathrm{UB}},
+F_g(T) = \sum_{i \in g} w_i \Big(1 - \prod_{j \in T} (1 - P_{ij})\Big).
 $$
 
-où $\overline{\mathrm{UB}}$ est la **borne duale** du solveur, et non la valeur de sa meilleure solution : on résout avec une tolérance `mip_rel_gap`, si bien que l'optimum du MILP lui-même n'est connu qu'à cette tolérance près. L'écart certifié est $(\overline{\mathrm{UB}} - \mathrm{LB}) / \overline{\mathrm{UB}}$, avec $\mathrm{LB} = \max\big(F(\hat{x}), F(x^{\text{glouton}})\big)$.
+Chaque $F_g$ est une somme de fonctions monotones sous-modulaires (§5.1) : elle est donc elle-même monotone sous-modulaire.
 
-### 4.4 Choix des points de tangence
+**Inégalité de Nemhauser et Wolsey.** Pour tous $S, T \subseteq J$ :
 
-Entre deux points de tangence $\sigma_k < \sigma_{k+1}$, l'erreur maximale de l'enveloppe des tangentes est atteinte à leur intersection. Voici l'erreur absolue maximale sur $g$, calculée numériquement sur $\sigma \in [0, 20]$ :
+$$
+F_g(T) \le F_g(S \cup T) \le F_g(S) + \sum_{j \in T \setminus S} \rho_{gj}(S),
+\qquad \rho_{gj}(S) = \sum_{i \in g} w_i \, q_i(S) \, P_{ij}.
+$$
 
-| Points | $K$ | Erreur max | Atteinte en |
-|---|---|---|---|
-| `[0, 0.1, 0.25, 0.5, 1, 2, 3, 5]` | 8 | 0,028 | $\sigma \approx 1{,}42$ ($P \approx 0{,}76$) |
-| `[0, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5]` | 10 | 0,010 | $\sigma \approx 2{,}42$ |
-| `[0, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5]` | 13 | 0,005 | $\sigma \approx 1{,}73$ |
+La première inégalité découle de la monotonie. La seconde s'obtient en ajoutant les éléments de $T \setminus S$ un par un : par sous-modularité, chaque gain est au plus le gain calculé en $S$.
 
-Conséquence : l'écart de relaxation vérifie $\overline{\mathrm{UB}} - \mathrm{OPT} \le \varepsilon_{\max} \sum_i w_i$. **Retenu : $K = 10$**, soit au plus 1 % du poids total. Avec la liste à 8 points prévue au départ, l'erreur maximale tombait précisément dans la zone de $P$ comprise entre 0,6 et 0,9, qui est celle qui nous intéresse.
+**Problème maître**, sur $(x, y, \eta)$ seulement, soit $\lvert J\rvert + \lvert S\rvert + G$ variables :
 
-### 4.5 Taille et forme creuse
+$$
+\max \sum_g \eta_g \quad \text{s.c.} \quad \text{(C1)–(C4)}, \qquad
+\eta_g \le F_g(S_k) + \sum_{j \notin S_k} \rho_{gj}(S_k)\, x_j \quad \forall g,\ \forall S_k \in \mathcal{S},
+\qquad 0 \le \eta_g \le \textstyle\sum_{i \in g} w_i.
+$$
 
-On garde $\sigma_i$ comme **variable explicite**, avec une égalité par cellule. Si on la substituait dans les coupes, chacune recopierait toute la ligne $\lambda_{i\cdot}$, et le nombre de coefficients non nuls serait multiplié par $K$.
+**Algorithme.**
 
-| Bloc | Variables | Contraintes | Non-zéros |
-|---|---|---|---|
-| $x$, $y$ | $\lvert J\rvert + \lvert S\rvert$ | — | — |
-| $\sigma$, $z$ | $2\lvert I\rvert \approx 20\,000$ | — | — |
-| Définition de $\sigma$ | — | $\lvert I\rvert$ | $\mathrm{nnz}(A) + \lvert I\rvert$ |
-| Coupes | — | $K\lvert I\rvert \approx 100\,000$ | $2K\lvert I\rvert$ |
-| (C1)–(C4) | — | $\approx \lvert J\rvert + \lvert C\rvert + 2\lvert S\rvert$ | $\approx 3\lvert J\rvert$ |
+1. Initialiser le pool $\mathcal{S}$ avec $\emptyset$, les ensembles successifs du glouton et l'optimum du budget précédent. Les coupes ne dépendent pas de $B$ : elles restent valides d'un budget à l'autre.
+2. Résoudre le maître, ce qui donne $T_k$ et la borne duale $\mathrm{UB}_k$.
+3. Évaluer $F(T_k)$ exactement, puis poser $\mathrm{LB} = \max(\mathrm{LB}, F(T_k))$.
+4. Ajouter les $G$ coupes en $S = T_k$, puis revenir à l'étape 2 tant que $(\mathrm{UB} - \mathrm{LB})/\mathrm{UB} >$ `ecart_cible`.
 
-Solveur : `scipy.optimize.milp`, qui s'appuie sur HiGHS et accepte des matrices creuses.
+### 4.3 Validité et convergence
+
+- **Borne supérieure.** Pour tout $T$ réalisable, $\eta_g = F_g(T)$ satisfait toutes les coupes. Le maître a donc une valeur $\ge F(T)$, en particulier $\ge \mathrm{OPT}$. On retient la **borne duale** de HiGHS, qui reste valide même quand le maître s'arrête sur sa limite de temps.
+- **Borne inférieure.** Chaque $T_k$ est réalisable, puisqu'il satisfait (C1)–(C4). $F(T_k)$ est calculé exactement, sans logarithme, sans plafonnement et sans tangente.
+- **Convergence finie.** Si le maître renvoie un $T_k$ déjà présent dans le pool, sa coupe impose $\eta_g \le F_g(T_k)$, donc $\mathrm{UB} = F(T_k) = \mathrm{LB}$ : $T_k$ est optimal. Le nombre d'ensembles étant fini, l'algorithme termine.
+
+### 4.4 Pourquoi plusieurs blocs
+
+Avec un seul bloc ($G = 1$), on retrouve l'algorithme original de Nemhauser et Wolsey. Une coupe agrège alors tout le site : le maître peut « emprunter » la couverture promise à une zone pour la créditer à une autre. Plus les blocs sont petits, plus les coupes sont fortes, mais plus le maître grossit.
+
+Mesures à B = 12, avec 150 s au total :
+
+| Découpage | Itérations | Écart certifié |
+|---|---|---|
+| 1 bloc (site entier) | 11 | 6,4 % |
+| 163 blocs de 10 m | 4 | 0,95 % |
+
+Chaque coupe multi-blocs est **creuse**, puisque seules les configurations qui voient le bloc $g$ y apparaissent. Elle ajoute environ 60 000 non-nuls, contre 3,26 M pour le modèle compact.
 
 ## 5. Heuristique gloutonne
 
@@ -204,15 +207,15 @@ Deux mécanismes font tomber la garantie dans notre cas :
 - Le coût d'une configuration dépend de ce qui est déjà choisi, parce que le support peut être déjà payé. La fonction de coût n'est donc plus modulaire.
 - Le premier choix de hauteur en $c$ verrouille l'emplacement (C3). Le glouton ne revient jamais sur une décision.
 
-Le glouton sert donc de **référence rapide et de borne inférieure**. Seul le MILP certifie la qualité d'une solution (§4.3).
+Le glouton sert donc de **référence rapide et de borne inférieure**. Seule la décomposition du §4 certifie la qualité d'une solution.
 
 ## 6. Protocole expérimental
 
 1. Balayer le budget de `budget.min` à `budget.max` par pas de `budget.pas`.
 2. Pour chaque $B$, enregistrer :
    - $F(x^{\text{glouton}})$ ;
-   - $F(\hat{x})$ ;
-   - $\overline{\mathrm{UB}}$ ;
+   - $F(\hat{x})$, la meilleure solution de la décomposition ;
+   - $\mathrm{UB}$, la borne supérieure certifiée ;
    - le temps de calcul ;
    - la composition de la solution (nombre de radars, de caméras et de supports, hauteurs retenues).
 3. Tracer le front couverture/budget avec les trois courbes et la bande $[\mathrm{LB}, \overline{\mathrm{UB}}]$.
@@ -228,4 +231,5 @@ Le glouton sert donc de **référence rapide et de borne inférieure**. Seul le 
 - G. L. Nemhauser, L. A. Wolsey, M. L. Fisher (1978). *An analysis of approximations for maximizing submodular set functions — I.* Mathematical Programming 14, 265–294.
 - S. Khuller, A. Moss, J. Naor (1999). *The budgeted maximum coverage problem.* Information Processing Letters 70(1), 39–45.
 - M. Sviridenko (2004). *A note on maximizing a submodular set function subject to a knapsack constraint.* Operations Research Letters 32(1), 41–43.
+- G. L. Nemhauser, L. A. Wolsey (1981). *Maximizing submodular set functions: formulations and analysis of algorithms.* Annals of Discrete Mathematics 11, 279–301.
 - R. Church, C. ReVelle (1974). *The maximal covering location problem.* Papers of the Regional Science Association 32, 101–118.

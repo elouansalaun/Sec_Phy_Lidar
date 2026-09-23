@@ -87,12 +87,12 @@ optimisation:
   capacite_support:            # nombre max de capteurs par support (c, h)
     radar: 1
     camera: 4
-  p_clip: 0.999                # plafond de P avant ln(1 - P)
   budget:
     min: 2.0
     max: 30.0
     pas: 1.0
-  milp:
-    tangentes_s: [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0]
-    time_limit_s: 300
-    mip_rel_gap: 1.0e-3
+  milp:                        # coupes sous-modulaires multi-blocs (src/milp.py)
+    bloc_m: 10.0                 # côté des blocs spatiaux : plus petit = coupes plus fortes, maître plus gros
+    ecart_cible: 5.0e-3          # arrêt quand (UB − LB) / UB ≤ 0,5 %
+    temps_maitre_s: 120          # limite par résolution du maître
+    temps_max_s: 900             # limite par budget
