@@ -1,0 +1,179 @@
+5. Changer de fond de carte dans QGIS (étape B). QGIS ouvre directement les fichiers .LAZ : glisse-les dans la fenêtre.
+
+Au premier chargement, il crée un index .copc.laz à côté de chaque tuile. C'est long, et c'est pour ça que *.copc.laz est dans le .gitignore.
+Dans Propriétés → Symbologie, choisis Classification pour voir le sol, les bâtiments et la classe 1.
+Le nuage de points devient ton fond de carte principal, avec OSM en complément pour les noms de rues.
+Dessine ensuite ton périmètre (étape C) dans le carré central.
+
+Quand tu as la sortie de pdal info --stats et un premier périmètre, envoie-les-moi. On définira alors la règle d'extraction de la végétation avant d'écrire les pipelines.
+
+La suite, c'est de dessiner ton site sur les tuiles. On enchaîne sur les étapes B5 à B9 et C, adaptées à tes données.
+
+1. Tracer le cadre autorisé pour le site
+
+Pour ne pas déborder par erreur, commence par afficher le carré central, là où le périmètre doit rester avec un buffer de 400 m.
+
+Traitement → Boîte à outils, cherche « Créer une couche à partir d'une emprise ».
+Dans le champ Emprise, colle 295400,296600,5039400,5040600 [EPSG:2950].
+Lance l'outil. Dans la symbologie de la nouvelle couche, choisis aucun remplissage et un contour rouge épais.
+
+Ton périmètre devra rester entièrement dans ce cadre.
+
+2. Choisir l'emplacement du site
+
+Parcours la zone en 2D (fond OSM avec les tuiles) et en vue 3D. Un bon emplacement regroupe :
+
+quelques bâtiments, qui masquent la vue ;
+une zone boisée, qui atténue la détection (tu la repères aux points gris de la classe 1 en hauteur) ;
+du dénivelé, pour que certaines positions dominent le site ;
+au moins une zone dégagée, parking ou pelouse.
+
+Évite l'hôpital Sainte-Justine et l'Oratoire. Une partie du campus, une zone de stationnement ou une lisière boisée conviennent très bien.
+
+Si l'affichage est lent avec 127 millions de points, désactive les tuiles que tu ne regardes pas. Tu peux aussi, dans Propriétés → Rendu, augmenter l'erreur maximale d'affichage pour que QGIS dessine moins de points.
+
+3. Créer le GeoPackage
+
+Couche → Créer une couche → Nouvelle couche GeoPackage, fichier data/site/site.gpkg, SCR EPSG:2950 :
+
+perimetre (polygone) : champs nom, type_cloture ;
+zones (polygone) : champs nom, niveau (entier), poids (réel), cible_intrus (booléen). ⚠️ Choisis « Ajouter une nouvelle couche », pas « Écraser » ;
+acces (point) : champs nom, type.
+
+Ajoute ensuite les contraintes de saisie sur zones (voir B6 plus haut) : niveau dans une liste 1, 2 ou 3, poids strictement positif, nom obligatoire.
+
+4. Régler l'accrochage
+
+Affiche la barre d'accrochage et règle-la :
+
+l'aimant activé, en Configuration avancée ;
+perimetre et zones en sommet et segment, tolérance 1 m (en unités de la carte) ;
+Éviter les intersections coché sur zones ;
+Édition topologique activée.
+5. Dessiner
+Sélectionne perimetre, clique sur le crayon pour passer en édition, puis Ajouter une entité polygone. Clic gauche pour chaque sommet, clic droit pour terminer. Un seul polygone, dans le cadre rouge. Enregistre.
+Copie le périmètre et colle-le dans zones.
+Découpe-le avec Séparer les entités : 1 zone cœur, 1 ou 2 zones sensibles, et le reste en périphérie.
+Remplis les attributs de chaque zone, par exemple :
+Zone	niveau	poids (point de départ)	cible_intrus
+Cœur	3	10	vrai
+Sensible	2	3	faux
+Périphérie	1	1	faux
+Ajoute 1 à 3 points dans acces pour les portails.
+Enregistre les modifications et quitte le mode édition.
+6. Vérifier et sauvegarder
+Vecteur → Outils de géométrie → Vérifier la validité sur perimetre et sur zones : aucune erreur attendue.
+Dans la table attributaire de zones, ajoute un champ calculé $area pour voir la surface de chaque zone. Calcule ensuite poids × surface : c'est l'effet de surface de l'étape D. Si la périphérie pèse beaucoup plus que le cœur, note-le, on en discutera.
+Enregistre le projet sous qgis/site.qgz, ferme QGIS, puis committe site.gpkg et site.qgz. Le .gitignore doit exclure data/raw et *.copc.laz.
+Ensuite
+
+Quand ton site.gpkg est enregistré, dis-le-moi. Je relirai la géométrie et les poids. Puis on attaque l'étape E : le script Python src/site.py, qui valide le site, calcule le buffer et cale l'emprise sur la grille. C'est la première vraie brique de code du projet.
+
+Exploration des contraintes de champs dans le formulaire d'attributs
+
+Maintenant on sécurise la saisie, on règle l'accrochage, puis on dessine.
+
+1. Contraintes sur la couche zones
+Double-clique sur zones dans Layers, puis ouvre l'onglet Attributes Form.
+Dans la liste des champs, clique sur chaque champ et règle la partie droite de la fenêtre :
+
+niveau
+
+Widget Type : Value Map. Dans le tableau, ajoute trois lignes (Value / Description) : 1 / Périphérie, 2 / Sensible, 3 / Cœur.
+Constraints : coche Not null et Enforce not null constraint.
+
+poids
+
+Constraints : coche Not null et Enforce not null constraint.
+Champ Expression : "poids" > 0, puis coche Enforce expression constraint.
+
+cible_intrus
+
+Widget Type : Checkbox.
+Defaults → Default value : false.
+
+nom
+
+Constraints : Not null et Enforce not null constraint.
+Clique sur Apply, puis OK.
+2. Accrochage
+Affiche la barre : View → Toolbars → Snapping Toolbar.
+Clique sur l'aimant (Enable Snapping), puis ouvre le menu à côté et choisis Advanced Configuration. Clique ensuite sur Edit advanced configuration pour afficher le tableau par couche.
+Règle le tableau ainsi :
+Couche	Coché	Type	Tolerance	Units	Avoid Overlap
+perimetre	✔	Vertex + Segment	1	m (map units)	non
+zones	✔	Vertex + Segment	1	m	oui
+acces	✔	Vertex + Segment	1	m	—
+tuiles LAZ, cadre rouge	✘				
+
+⚠️ Ne coche pas Avoid Overlap sur perimetre. Sinon, les zones collées à l'intérieur seraient découpées pour ne pas le chevaucher, et elles disparaîtraient.
+4. Active Topological Editing, l'icône juste à côté de l'aimant.
+
+3. Dessiner le périmètre
+Sélectionne perimetre dans Layers, puis clique sur Toggle Editing (le crayon).
+Clique sur Add Polygon Feature (Cmd + .). Fais un clic gauche pour chaque sommet, à l'intérieur du cadre rouge, puis un clic droit pour fermer le polygone.
+Le formulaire s'ouvre : nom = « Site Alpha » (ou le nom de ton choix), type_cloture = « grillage 2,5 m ». Clique sur OK.
+Clique sur Save Layer Edits (disquette), puis Toggle Editing pour quitter l'édition.
+4. Créer les zones en découpant le périmètre
+Avec perimetre sélectionné, clique sur le polygone avec Select Features (flèche jaune). Il devient jaune.
+Edit → Copy Features (Cmd + C).
+Sélectionne zones, Toggle Editing, puis Edit → Paste Features (Cmd + V). Le polygone est copié dans zones, et nom est conservé.
+Affiche View → Toolbars → Advanced Digitizing Toolbar et choisis Split Features (icône de ciseaux).
+Trace une ligne qui traverse complètement le polygone : clic gauche pour chaque point, en commençant et en finissant à l'extérieur, puis clic droit. Le polygone est coupé en deux. Recommence pour obtenir tes 3 ou 4 zones.
+Ouvre la table attributaire (F6) et remplis chaque ligne : nom, niveau, poids, cible_intrus. Tu peux partir de 10 / 3 / 1, avec cible_intrus vrai seulement pour le cœur.
+Save Layer Edits, puis quitte l'édition.
+5. Les accès (facultatif)
+
+Sélectionne acces, Toggle Editing, puis Add Point Feature. Clique sur la clôture, là où tu veux un portail. L'accrochage colle le point sur le bord. Remplis nom et type, puis enregistre.
+
+6. Contrôle
+
+Dans la table de zones, ouvre la Field Calculator (icône de boulier), crée un champ virtuel surface = $area et un champ poids_total = "poids" * $area. Tu vois ainsi si la périphérie écrase le cœur.
+
+Quand c'est fait, envoie-moi une capture ou dis-moi que site.gpkg est enregistré. Je le relirai directement dans ton dossier, puis on passe au script src/site.py.
+
+comment creer les champs dans field calculator
+
+Le Field Calculator crée un champ et le remplit en une seule opération, à partir d'une expression.
+
+Ouvrir le Field Calculator
+Clic droit sur zones dans Layers, puis Open Attribute Table (ou F6).
+Dans la barre d'outils de la table, clique sur l'icône de boulier Open field calculator (Cmd + I).
+Créer le champ surface
+
+Remplis la fenêtre ainsi :
+
+Option	Valeur
+Only update 0 selected features	décoché
+Create a new field	coché
+Create virtual field	coché (voir l'explication ci-dessous)
+Output field name	surface
+Output field type	Decimal number (real)
+Output field length / Precision	12 / 1
+Expression (grande zone à gauche)	area($geometry)
+
+Sous la zone d'expression, Output preview affiche le résultat pour la première entité. Vérifie que la valeur est plausible en m². Clique ensuite sur OK : la colonne apparaît dans la table.
+
+Créer poids_total et part_pct
+
+Rouvre le Field Calculator pour chaque champ, avec les mêmes réglages :
+
+Output field name	Expression
+poids_total	"poids" * area($geometry)
+part_pct	100 * "poids" * area($geometry) / sum("poids" * area($geometry))
+
+part_pct donne directement la part de chaque zone dans la fonction objectif. C'est le chiffre qui compte.
+
+Deux choix expliqués
+
+Pourquoi area($geometry) plutôt que $area ?
+
+$area calcule la surface sur l'ellipsoïde, selon les réglages du projet.
+area($geometry) calcule la surface plane dans la projection de la couche, ici MTM 8.
+Plus tard, geopandas et shapely calculeront des surfaces planes. Avec area($geometry), QGIS et Python donnent les mêmes chiffres. La différence est minime en MTM, mais c'est une bonne habitude de cohérence.
+
+Pourquoi un champ virtuel ?
+
+Il n'est pas enregistré dans le GeoPackage, seulement dans le projet .qgz.
+Il se recalcule automatiquement si tu modifies une zone.
+Une valeur dérivée ne doit pas être stockée dans les données sources. Ton script Python la recalculera lui-même.

@@ -1,5 +1,5 @@
 project:
-  name: "lidar-multimodal"
+  name: "lidar-project"
   random_seed: 42
 
 paths:
@@ -7,49 +7,7 @@ paths:
   interim: "data/interim"
   processed: "data/processed"
 
-  lidar_raw: "data/raw/lidar"
-  satellite_raw: "data/raw/satellite"
-
-  lidar_processed: "data/processed/lidar"
-  satellite_processed: "data/processed/satellite"
-
-  outputs: "outputs"
-
-spatial:
-  crs: "EPSG:2154"
-
-  bounds:
-    xmin: 650000
-    ymin: 6860000
-    xmax: 660000
-    ymax: 6870000
-
-  resolution:
-    lidar: 0.5
-    satellite: 10.0
-
 lidar:
-  ground_class: 2
-
-  filters:
-    outlier:
-      enabled: true
-
-    ground:
-      enabled: true
-      method: "smrf"
-
-raster:
-  dtm_resolution: 1.0
-  dsm_resolution: 1.0
-
-dataset:
-  patch_size: 128
-  train_split: 0.70
-  val_split: 0.15
-  test_split: 0.15
-
-model:
-  batch_size: 16
-  learning_rate: 0.001
-  epochs: 100
+  crs: "EPSG:2950"
+  vertical_datum: "CGVD28"   # à confirmer à l'étape 3
+  data_extent: [295000, 5039000, 297000, 5041000]
