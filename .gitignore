@@ -1,8 +1,11 @@
 
 
-
+__pycache__/
+*.aux.xml
 data/raw/
 data/interim/
+data/processed/
+data/external/
 *.copc.laz
 *.gpkg-wal
 *.gpkg-shm

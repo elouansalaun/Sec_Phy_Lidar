@@ -22,3 +22,38 @@ site:
   study_buffer_m: 400      # portée max capteurs + marge
   resolution_m: 1.0        # résolution des rasters
   tolerance_m: 0.5         # tolérance géométrique des contrôles
+
+rasters:
+  tiles_glob: "data/raw/*.LAZ"
+  out_dir: "data/processed/rasters"
+  chunk_size: 5000000
+  fill_max_distance_px: 100     # rayon max de comblement des trous du MNT/MNS
+  classes:
+    sol: [2]
+    batiment: [6]
+    autre: [1]                  # végétation + objets (non séparés par le MRNF)
+    pont: [17]
+    bruit: [7]                  # exclu de tous les produits
+
+validation:
+  out_dir: "data/processed/validation"
+  margin_m: 50                   # marge autour du périmètre pour la zone de test PDAL
+  pdal_ref: "data/processed/validation/mnt_pdal.tif"
+  mrnf_ref: "data/external/mnt_mrnf.tif"   # tuile MNT téléchargée sur la carte du MRNF
+
+candidates:
+  output: "data/site/candidats.gpkg"
+  mat:
+    spacing_perimeter_m: 20      # espacement des mâts le long de la clôture
+    inset_m: 1.0                 # recul vers l'intérieur de la clôture
+    spacing_interior_m: 25       # grille de mâts à l'intérieur
+    min_dist_building_m: 2.0
+    heights_m: [4, 6, 8, 10]
+    cost_base: 1.0
+    cost_per_m: 0.10
+  toit:
+    inset_m: 1.5                 # recul depuis le bord du toit
+    simplify_m: 2.0              # simplification des emprises -> coins
+    heights_m: [2, 4]
+    cost_base: 0.8
+    cost_per_m: 0.10
