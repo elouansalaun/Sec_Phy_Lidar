@@ -11,3 +11,14 @@ lidar:
   crs: "EPSG:2950"
   vertical_datum: "CGVD28"   # à confirmer à l'étape 3
   data_extent: [295000, 5039000, 297000, 5041000]
+
+site:
+  gpkg: "data/site/site.gpkg"               # dessiné dans QGIS (entrée)
+  output_gpkg: "data/site/site_derive.gpkg" # généré (sortie)
+  grid_yaml: "data/site/grid.yaml"          # emprise calée sur la grille (sortie)
+  weights_csv: "data/site/poids.csv"
+  figure: "data/site/site.png"
+  approach_ring_m: 15      # largeur de l'anneau d'approche autour des actifs
+  study_buffer_m: 400      # portée max capteurs + marge
+  resolution_m: 1.0        # résolution des rasters
+  tolerance_m: 0.5         # tolérance géométrique des contrôles

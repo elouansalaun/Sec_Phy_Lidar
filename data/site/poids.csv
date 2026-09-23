@@ -1,0 +1,8 @@
+source,role,niveau,poids,surface_m2,poids_x_surface,part_objectif_pct
+Bat.3,approche,3,10.0,3255.3,32553.1,66.9
+Bat.1,approche,2,5.0,1602.5,8012.7,16.5
+peripherie,peripherie,1,1.0,4362.1,4362.1,9.0
+Bat.4,approche,2,4.0,564.9,2259.6,4.6
+Bat.2,approche,2,4.0,222.6,890.3,1.8
+Gaz Bat.3,approche,2,4.0,118.6,474.5,1.0
+Générateur,approche,2,4.0,29.4,117.6,0.2
