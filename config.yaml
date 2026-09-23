@@ -65,3 +65,18 @@ viewshed:
   target_height_m: 1.0     # centre du torse d'un intrus debout
   veg_min_h_m: 0.3         # sous ce seuil, "autre" = sol (herbe, bordures)
   out_dir: "data/processed/viewshed"
+
+
+sensors:
+  cameras:
+    - {name: cam_grand_angle, n_h: 1920, n_v: 1080, hfov_deg: 90, ppm_50: 25.0, alpha: 1.0, cost: 1.0}
+    - {name: cam_standard,    n_h: 1920, n_v: 1080, hfov_deg: 60, ppm_50: 25.0, alpha: 1.0, cost: 1.0}
+    - {name: cam_tele,        n_h: 1920, n_v: 1080, hfov_deg: 30, ppm_50: 25.0, alpha: 1.0, cost: 1.3}
+  camera_azimuths_deg: [0, 45, 90, 135, 180, 225, 270, 315]
+  radars:
+    - {name: radar_perimetre, r90_m: 150.0, p_fa: 1.0e-6, elev_max_deg: 15.0, alpha: 0.3, cost: 5.0}
+  radar_tilts_deg: [0,5,10,15]
+
+coverage:
+  p_min: 0.01                    # P < p_min -> 0 dans la matrice creuse (perte mesurée)
+  out_dir: "data/processed/coverage"
