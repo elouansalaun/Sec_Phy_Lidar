@@ -90,6 +90,8 @@ def main() -> None:
 
     cfg = load_config()
     out = ROOT / cfg["optimisation"]["out_dir"]
+    figs = ROOT / cfg["optimisation"]["figures_dir"]
+    figs.mkdir(parents=True, exist_ok=True)
     budgets = [float(b) for b in cfg["optimisation"].get("analyse_budgets", [4, 13, 30])]
     inst, configs = load_instance(cfg, ROOT)
     cel = np.load(ROOT / cfg["coverage"]["out_dir"] / "cellules.npz")
@@ -138,7 +140,7 @@ def main() -> None:
     fig.legend(handles=leg, loc="outside lower center", ncol=4, frameon=False, fontsize=9,
                labelcolor=INK_2)
     fig.suptitle("Solutions optimales certifiées", x=0.01, ha="left", fontsize=13, color=INK)
-    fig.savefig(out / "carte_solutions.png", bbox_inches="tight")
+    fig.savefig(figs / "carte_solutions.png", bbox_inches="tight")
     plt.close(fig)
 
     # --- Figure 2 : où le glouton perd -----------------------------------------------------
@@ -162,7 +164,7 @@ def main() -> None:
         cb.ax.tick_params(colors=INK_2, labelsize=8)
         fig.suptitle("Ce que le glouton ne voit pas — bleu : l'optimum voit mieux ; capteurs du glouton",
                      x=0.01, ha="left", fontsize=13, color=INK)
-        fig.savefig(out / "carte_glouton.png", bbox_inches="tight")
+        fig.savefig(figs / "carte_glouton.png", bbox_inches="tight")
         plt.close(fig)
 
     # --- Tableau par zone ------------------------------------------------------------------

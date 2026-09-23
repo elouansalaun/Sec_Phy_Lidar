@@ -84,6 +84,7 @@ coverage:
 
 optimisation:
   out_dir: "data/processed/optim"
+  figures_dir: "figures"         # figures versionnées (reprises dans le README)
   capacite_support:            # nombre max de capteurs par support (c, h)
     radar: 1
     camera: 4
@@ -97,3 +98,16 @@ optimisation:
     ecart_cible: 5.0e-3          # arrêt quand (UB − LB) / UB ≤ 0,5 %
     temps_maitre_s: 120          # limite par résolution du maître
     temps_max_s: 900             # limite par budget
+
+
+intrus:                          # évaluation par l'intrus (docs/formulation.md, §7)
+  out_dir: "data/processed/intrus"
+  bande_ext_m: 30.0              # bande extérieure incluse dans le domaine (0 = cas dégénéré §7.1)
+  cible_contact_m: 1.5           # cible = cellules intérieures à moins de d_t de l'actif cible_intrus
+  vitesse_m_s: 1.5               # marche
+  tau_obs_s: 1.0                 # intervalle entre observations indépendantes (hypothèse)
+  tau_obs_sensibilite_s: [0.5, 1.0, 5.0]
+  t_cloture_s: 10.0              # temps d'escalade du grillage de 2,5 m, exposé (hypothèse)
+  t_portail_s: 3.0               # temps de passage d'un portail fermé (hypothèse)
+  pi_portail: 0.8                # part d'intrus opportunistes (portails seulement) — hypothèse
+  objectif_nsga: "pire_cas"      # "pire_cas" (p*_F) ou "melange" (D_pi), voir §7.3

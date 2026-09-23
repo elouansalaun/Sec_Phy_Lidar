@@ -18,9 +18,10 @@ Le problème est traité comme un **problème de couverture maximale (MCLP)** so
 4. [Installation et reproduction](#installation-et-reproduction)
 5. [Semaine 1 — Site, rasters, validation, positions candidates](#semaine-1--site-rasters-validation-positions-candidates)
 6. [Semaine 2 — Visibilité, capteurs, matrice de couverture](#semaine-2--visibilité-capteurs-matrice-de-couverture)
-7. [Choix méthodologiques](#choix-méthodologiques)
-8. [Limites connues](#limites-connues)
-9. [Prochaines étapes](#prochaines-étapes)
+7. [Semaine 3 — Optimisation : glouton et optimum certifié](#semaine-3--optimisation--glouton-et-optimum-certifié)
+8. [Choix méthodologiques](#choix-méthodologiques)
+9. [Limites connues](#limites-connues)
+10. [Prochaines étapes](#prochaines-étapes)
 
 ---
 
@@ -39,8 +40,9 @@ Trois éléments distinguent l'approche d'un simple calcul de couverture :
 3. **Un modèle de substitution (deep learning)** pour accélérer le calcul des champs de visibilité, qui est
    le goulot d'étranglement de l'optimisation.
 
-Méthodes d'optimisation comparées : glouton (garantie (1 − 1/e) par sous-modularité), programmation linéaire
-en nombres entiers (optimum exact sur petites instances), NSGA-II (front de Pareto multi-objectif).
+Méthodes d'optimisation comparées : glouton au ratio gain/coût (heuristique rapide, sans garantie avec des
+coûts de support partagés), optimum certifié par décomposition en coupes sous-modulaires (encadrement
+[borne inférieure, borne supérieure] de l'optimum), et NSGA-II (front de Pareto multi-objectif).
 
 ## Avancement
 
@@ -48,7 +50,7 @@ en nombres entiers (optimum exact sur petites instances), NSGA-II (front de Pare
 |---|---|---|
 | 1 | Site, rasters MNT/MNS/hauteurs, validation, positions candidates | ✅ |
 | 2 | Moteur de visibilité exact, validation (tests analytiques, GDAL, arbitre exact), modèles caméra/radar, matrice de couverture | ✅ |
-| 3 | Baselines glouton et MILP, métriques de couverture | |
+| 3 | Formulation, glouton, optimum certifié (coupes sous-modulaires), front couverture/budget, cartes | ✅ |
 | 4 | Évaluation par l'intrus (pire chemin) + NSGA-II | |
 | 5–6 | Modèle de substitution (U-Net) : dataset, entraînement, accélération/précision | |
 | 7 | Boucle adversariale optimiseur ↔ intrus, analyse de sensibilité | |
@@ -78,12 +80,9 @@ classe 1 avec les poteaux, fils, véhicules et équipements de toiture. Elle doi
 
 ```bash
 conda create -n lidar-project -c conda-forge python=3.11 \
-    pdal python-pdal laspy lazrs-python rasterio "geopandas>=1.0" "shapely>=2" \
-    pyproj pyogrio pyyaml matplotlib numba
-conda activate lidar-project
-conda create -n lidar-project -c conda-forge python=3.11 \
     pdal python-pdal gdal laspy lazrs-python rasterio "geopandas>=1.0" "shapely>=2" \
-    pyproj pyogrio pyyaml matplotlib numba scipy pandas pytest
+    pyproj pyogrio pyyaml matplotlib numba "scipy>=1.9" pandas pytest
+conda activate lidar-project
 ```
 
 Les tuiles LAZ sont à placer dans `data/raw/` (non versionnées, ≈ 1,3 Go), et la tuile MNT du MRNF dans
@@ -102,6 +101,10 @@ python -m src.validation_viewshed   # 6. validation externe contre gdal_viewshed
 python -m src.validation_viewshed diag C034 4   #    diagnostic d'un couple (arbitre exact)
 python -m src.sensors C052 4        # 7. démo : surface efficace par capteur pour un candidat
 python -m src.coverage              # 8. matrice de couverture du MCLP
+python -m src.greedy                # 9. glouton, balayage du budget (< 1 s)
+python -m src.milp                  # 10. optimum certifié, balayage du budget (≈ 3 h 30)
+python -m src.pareto                # 11. front couverture/budget, écarts, convergence
+python -m src.analyse               # 12. cartes des solutions, bilan par zone
 ```
 
 ```
@@ -114,10 +117,20 @@ python -m src.coverage              # 8. matrice de couverture du MCLP
 │   ├── viewshed.py             épaisseur optique τ de la ligne de visée (numba)
 │   ├── validation_viewshed.py  comparaison à gdal_viewshed, diagnostic, arbitre exact
 │   ├── sensors.py              modèles caméra (EN 62676-4) et radar (Swerling I)
-│   └── coverage.py             matrice de couverture creuse (configurations × cellules)
+│   ├── coverage.py             matrice de couverture creuse (configurations × cellules)
+│   ├── instance.py             instance d'optimisation : évaluation exacte, contraintes
+│   ├── greedy.py               glouton au ratio gain/coût
+│   ├── milp.py                 optimum certifié par coupes sous-modulaires multi-blocs
+│   ├── pareto.py               front couverture/budget, écarts, convergence
+│   └── analyse.py              cartes des solutions, bilan par zone
 ├── tests/
 │   ├── test_viewshed.py        solutions analytiques du moteur de visibilité
-│   └── test_sensors.py         propriétés des modèles de capteurs, contrôle de configuration
+│   ├── test_sensors.py         propriétés des modèles de capteurs, contrôle de configuration
+│   ├── test_greedy.py          glouton contre force brute, cas construits
+│   └── test_milp.py            optimum exact sur instances jouets, validité des coupes
+├── docs/
+│   └── formulation.md          formulation mathématique et preuves (semaine 3)
+├── figures/                    figures versionnées reprises dans ce README
 └── data/
     ├── raw/                    tuiles LAZ (non versionnées)
     ├── external/               références externes (non versionnées)
@@ -493,6 +506,196 @@ Résultats :
 
 ---
 
+## Semaine 3 — Optimisation : glouton et optimum certifié
+
+La formulation complète, avec les preuves, est dans [`docs/formulation.md`](docs/formulation.md). Cette
+section en résume les choix et les résultats.
+
+### 1. Formulation
+
+On maximise la **couverture pondérée espérée** d'un intrus, sous contrainte de budget :
+
+max F(x) = Σᵢ wᵢ · (1 − Πⱼ (1 − Pᵢⱼ)^xⱼ)
+
+- **Détection probabiliste.** L'intrus n'échappe à la détection que s'il échappe à chaque capteur, les
+  détections étant supposées indépendantes. F est non linéaire, monotone et **sous-modulaire** : chaque
+  capteur ajouté rapporte moins que le précédent.
+- **Variables.** xⱼ ∈ {0, 1} pour chacune des 3 259 configurations, et y_s ∈ {0, 1} pour chacun des 171
+  supports (position, hauteur).
+- **Contraintes :**
+  - **(C1) Budget** : Σ coût capteur + Σ coût support ≤ B. Un mât est payé une seule fois, quel que soit
+    le nombre de capteurs qu'il porte.
+  - **(C2) Liaison** : un capteur n'existe que si son support est construit.
+  - **(C3) Une seule hauteur par emplacement** : on ne pose pas un mât de 4 m et un de 10 m au même endroit.
+  - **(C4) Capacité par support** : 1 radar au plus (il a besoin du sommet dégagé) et 4 caméras au plus.
+    Deux caméras à la même hauteur sur un mât, dans des directions différentes, sont donc autorisées.
+- **Budget** balayé de 2 à 30 unités par pas de 1. On ne choisit pas un budget : on trace la courbe.
+
+`src/instance.py` regroupe ce que les solveurs partagent : le chargement, l'évaluation **exacte** de F et le
+contrôle des contraintes. Le glouton et la décomposition sont jugés par la même fonction.
+
+### 2. Glouton au ratio (`src/greedy.py`)
+
+- **Gains marginaux en un seul produit.** Le gain de la configuration j vaut Δⱼ = Σᵢ wᵢ qᵢ Pᵢⱼ, où qᵢ est
+  la probabilité de non-détection courante. Tous les gains se calculent donc par un produit matrice creuse ×
+  vecteur, Δ = A·(w ⊙ q). Une itération prend quelques millisecondes, et les 29 budgets se traitent en moins
+  d'une seconde.
+- **Coût marginal.** Coût du capteur, plus celui du support s'il n'est pas encore ouvert. Les configurations
+  interdites par (C1), (C3) et (C4) sont masquées.
+- **Meilleur entre le ratio gain/coût et le meilleur capteur isolé.** Le ratio seul peut être arbitrairement
+  mauvais (Khuller, Moss et Naor, 1999) : un test construit le montre (valeur 1 contre 100).
+
+**Aucune garantie d'approximation ici.** La garantie (1 − 1/e) de Nemhauser, Wolsey et Fisher (1978) vaut
+pour une contrainte de *cardinalité*. Avec un budget et des coûts additifs, la version corrigée garantit
+½(1 − 1/e) ≈ 0,32. Avec nos coûts de support partagés et le verrouillage de hauteur (C3), même cette garantie
+tombe. Le glouton sert donc de référence rapide et de borne inférieure. Seule la décomposition du §3 certifie
+la qualité d'une solution.
+
+**Tests (`tests/test_greedy.py`, 54 tests).** Comparaison à la force brute sur 40 instances aléatoires
+(8 configurations, 2⁸ sous-ensembles) : le glouton ne dépasse jamais l'optimum. Il l'atteint dans 69 % des
+109 cas, et descend au pire à 75 %. S'y ajoutent des cas construits :
+- le cas pathologique du ratio seul ;
+- le verrouillage de hauteur ;
+- la capacité radar ;
+- le support payé une seule fois.
+
+### 3. Optimum certifié
+
+**Premier essai : MILP compact à coupes tangentes, rejeté.** On pose σᵢ = Σⱼ −ln(1 − Pᵢⱼ)·xⱼ, qui est
+linéaire en x. La détection vaut alors exactement 1 − e^(−σᵢ), et on majore cette fonction concave par
+10 tangentes (surestimation ≤ 0,010 par cellule). Le modèle est correct, mais intraitable :
+
+| Mesure (B = 12) | Résultat |
+|---|---|
+| Taille | 113 356 lignes, 23 376 colonnes, **3,26 M non-nuls** |
+| Branch-and-bound (HiGHS) | aucune solution réalisable en 150 s |
+| Relaxation continue (point intérieur) | 84 s, borne **0,927**, avec des fractions de capteur sur 31 configurations |
+| Meilleure solution connue | 0,680 |
+
+La relaxation continue est trop faible : des fractions xⱼ = 0,3 réparties partout « voient » presque tout
+le site.
+
+**Méthode retenue : coupes sous-modulaires multi-blocs (`src/milp.py`).** On découpe les cellules en
+163 blocs spatiaux de 10 m, et F = Σ_g F_g. Chaque F_g est monotone et sous-modulaire, d'où l'inégalité de
+Nemhauser et Wolsey (1981), valable pour tous S et T :
+
+F_g(T) ≤ F_g(S) + Σ_{j∈T∖S} ρ_gj(S),  avec ρ_gj(S) = Σ_{i∈g} wᵢ qᵢ(S) Pᵢⱼ
+
+- **Problème maître** sur (x, y, η) seulement, soit 3 430 variables binaires : max Σ_g η_g sous (C1)–(C4)
+  et une coupe par bloc pour chaque ensemble S déjà visité.
+- **Boucle** : on résout le maître, ce qui donne T et une borne supérieure. On évalue F(T) exactement, ce
+  qui donne une borne inférieure. On ajoute les coupes en T, et on recommence jusqu'à un écart de 0,5 %.
+- **Objectif exact** : pas de logarithme, pas de plafonnement de P, pas de tangente.
+- **Borne supérieure = borne duale de HiGHS**, et non la valeur de sa meilleure solution. Elle reste valide
+  même quand le maître s'arrête sur sa limite de temps.
+- **Coupes indépendantes du budget.** On les amorce avec les ensembles successifs du glouton et l'optimum du
+  budget précédent.
+
+**Pourquoi plusieurs blocs.** Une seule coupe globale laisse le maître « emprunter » la couverture promise à
+une zone pour la créditer à une autre.
+
+| Découpage (B = 12, 150 s) | Itérations | Écart certifié |
+|---|---|---|
+| 1 bloc (algorithme original) | 11 | 6,4 % |
+| 163 blocs de 10 m | 4 | 0,95 % |
+
+**Tests (`tests/test_milp.py`, 105 tests).**
+- Optimum de la force brute retrouvé exactement, pour 1, 5 et 20 blocs.
+- Validité de chaque coupe pour des S et T aléatoires.
+- Le cas du verrouillage de hauteur, où l'optimum trouve le mât de 10 m que le glouton rate.
+- Les contraintes (C3) et (C4).
+
+**Une correction en cours de route.** Le premier critère d'arrêt concluait à l'optimum dès que le maître
+renvoyait un ensemble déjà coupé. C'est vrai seulement si le maître a prouvé son propre optimum, pas s'il
+s'est arrêté sur sa limite de temps : deux budgets étaient déclarés convergés avec un écart de 1,6 et 2,1 %.
+Le critère exige maintenant le statut optimal du maître.
+
+### 4. Résultats (`src/pareto.py`)
+
+Balayage complet : 29 budgets, 207 min de calcul (limite de 15 min par budget).
+
+![Couverture en fonction du budget](figures/front.png)
+
+| Budget | Glouton | Optimum certifié [LB ; UB] | Solution optimale |
+|---|---|---|---|
+| 4 | 16,7 % | 20,9 % | 2 caméras sur un mât de **10 m** |
+| 6 | 27,3 % | 31,4 % | 3 caméras, mâts de 4 et 8 m |
+| 7 | 48,6 % | 48,6 % | 1 radar |
+| 12 | 68,0 % | 68,2 % | 1 radar + 3 caméras |
+| 13 | 82,8 % | 82,8 % | 2 radars |
+| 20 | 87,9 % | [87,9 ; 88,8] % | 3 radars |
+| 30 | 91,9 % | [93,8 ; 95,2] % | 4 radars + 3 caméras |
+
+**Lecture**
+1. **Le front monte par paliers radar.** Le premier radar ajoute 17 points (B = 7), le second 15 points
+   (B = 13). **Le coude est à B = 13** : deux radars couvrent 82,8 % du poids, et les 17 unités de budget
+   suivantes n'en ajoutent que 11. C'est la conclusion utile à un décideur.
+2. **Le glouton ne perd vraiment qu'à deux endroits.**
+   - À petit budget, avec des caméras seules : il perd jusqu'à **20 %** (B = 4), parce qu'il verrouille des
+     mâts de 4 m, moins chers, alors que l'optimum monte à 8 ou 10 m.
+   - À partir de 3 ou 4 radars : il perd jusqu'à 2 points de couverture (B = 30).
+
+   Entre les deux, le radar domine au point que le glouton est optimal. Sa perte médiane est de 0,2 %.
+3. **Tous les budgets sont encadrés à moins de 2,8 %, mais seuls 16 sur 29 atteignent la cible de 0,5 %.**
+   Au-delà de B = 18, chaque résolution du maître atteint sa limite de 120 s sans resserrer sa borne
+   supérieure : on le voit aux paliers plats des courbes de convergence. **Le goulot est la difficulté du
+   maître lui-même**, pas le nombre de coupes.
+
+![Perte du glouton et écart certifié](figures/ecarts.png)
+
+![Convergence de la décomposition](figures/convergence.png)
+
+### 5. Analyse spatiale (`src/analyse.py`)
+
+![Solutions optimales certifiées à B = 4, 13 et 30](figures/carte_solutions.png)
+
+- **À B = 13, deux radars suffisent** : l'un dans l'espace ouvert à l'ouest, l'autre dans la cour centrale.
+  Les zones qui restent mal vues sont celles derrière le bâtiment nord et à l'est, dans l'ombre des
+  bâtiments.
+- **À B = 30, l'optimum ajoute deux radars au nord et un mât de 3 caméras dans le coin sud-est.** Les
+  caméras couvrent ce qu'aucun radar ne voit, entre les deux bâtiments de l'est : l'association radar et
+  caméras sert à combler les ombres.
+
+![Ce que le glouton ne voit pas](figures/carte_glouton.png)
+
+**Où le glouton perd.**
+- À B = 4, il pose ses caméras sur un mât de 4 m au nord-est. L'optimum monte à 10 m sur le flanc ouest, là
+  où se trouve l'essentiel du poids.
+- À B = 30, la perte vient de bandes étroites le long des murs : ce sont les angles morts à pied de
+  bâtiment.
+
+**Couverture par zone** (optimum certifié, `zones.csv`) :
+
+| Zone | Part du poids W | B = 4 | B = 13 | B = 30 | Cellules à P < 0,5 (B = 30) |
+|---|---|---|---|---|---|
+| Bat.3 | **67 %** | 28 % | 89 % | 96 % | 4 % |
+| Bat.1 | 16 % | 0 % | 58 % | 84 % | 16 % |
+| Périphérie | 9 % | 8 % | 95 % | 100 % | 0 % |
+| Bat.4 | 4,5 % | 19 % | 62 % | 91 % | 9 % |
+| Bat.2 | 1,8 % | 0 % | 50 % | 86 % | 12 % |
+| Gaz Bat.3 | 1,0 % | 67 % | 100 % | 100 % | 0 % |
+
+**Bat.3 pèse les deux tiers de l'objectif.** Son poids de zone vaut 10, et son grand anneau d'approche le
+multiplie encore, puisque le poids est compté par m². L'optimiseur protège donc Bat.3 d'abord. À B = 13,
+Bat.1 n'est couvert qu'à 58 %, alors que c'est le deuxième actif du site. Ce n'est pas un défaut de
+l'optimiseur, mais une conséquence directe du choix de pondération, qui sera testée dans l'analyse de
+sensibilité.
+
+### 6. Ce qu'il faut retenir de la semaine 3
+
+1. **Une formulation correcte peut être inutilisable.** Le MILP compact était juste, mais sa relaxation
+   laissait 36 % d'écart pour plus d'une minute par nœud. Exploiter la structure sous-modulaire a donné un
+   problème maître de 3 600 variables au lieu de 23 000, avec un objectif exact.
+2. **Certifier plutôt que croire.** Le glouton n'a aucune garantie théorique ici. C'est l'encadrement
+   [LB, UB] qui montre qu'il est quasi optimal au-delà de B = 7, et mauvais en dessous.
+3. **Une limite de temps n'est pas une preuve.** La borne duale reste valide, mais « le maître a renvoyé la
+   même solution » ne prouve l'optimum que si le maître a lui-même conclu.
+4. **Le budget décisif est celui du deuxième radar** (B = 13, 82,8 %). Au-delà, les rendements sont
+   décroissants.
+5. **La pondération fait la solution** : deux tiers du poids sont sur un seul actif.
+
+---
+
 ## Choix méthodologiques
 
 **Organisation**
@@ -564,6 +767,17 @@ Résultats :
 27. **Cellules = sol des zones pondérées uniquement** ; matrice creuse, perte due au seuil mesurée (0,011 %).
 28. **Coûts du support et du capteur séparés** : un mât est un coût fixe partagé entre ses capteurs.
 
+**Optimisation**
+29. **Couverture probabiliste plutôt que binaire** : 1 − Π(1 − P) conserve l'information de visibilité
+    partielle construite en semaine 2, au lieu d'un seuil « couvert si P ≥ τ ».
+30. **Balayer le budget plutôt qu'en choisir un** : le front répond à « que m'achète chaque unité de plus ? ».
+31. **Une seule fonction d'évaluation exacte** (`instance.evaluate`) pour tous les solveurs.
+32. **Exploiter la sous-modularité plutôt que linéariser** : le modèle compact est rejeté sur mesures
+    (taille, temps, qualité de la relaxation), et ces mesures sont documentées.
+33. **Certifier par la borne duale** : chaque résultat est un encadrement [LB, UB], jamais une valeur
+    présentée comme optimale sans preuve.
+34. **Coupes par blocs spatiaux** : un compromis mesuré entre la force des coupes et la taille du maître.
+
 ## Limites connues
 
 - Végétation non séparée des autres objets de classe 1 (poteaux, véhicules, clôtures).
@@ -584,98 +798,30 @@ Résultats :
 - **Caméra** : conditions de jour et contraste idéal ; les critères DORI sont conçus pour des opérateurs
   humains.
 - **32 couples** (mât sous la surface du MNS) ne peuvent pas être validés contre un outil 2,5D.
+- **Indépendance des détections** entre capteurs : les corrélations réelles (brouillard, intrus qui rampe)
+  rendent 1 − Π(1 − P) optimiste. La vraie valeur se situe entre max P et 1 − Π(1 − P).
+- **Visibilité statique** : ni végétation saisonnière, ni véhicules stationnés.
+- **Détection moyenne, pas pire cas** : un adversaire qui connaît le dispositif choisit son chemin
+  (semaine 4).
+- **Pondération par m²** : Bat.3 porte 67 % de l'objectif et oriente toutes les solutions.
+- **Certification incomplète au-delà de B = 18** : l'écart reste entre 1 et 2,8 % dans la limite de 15 min
+  par budget.
 
 ## Prochaines étapes
 
-**Semaine 3 — Baselines glouton et MILP**
-- **Couverture probabiliste** : avec plusieurs capteurs, une cellule est détectée avec la probabilité
-  1 − Π(1 − P_ij). Le glouton s'en accommode (fonction sous-modulaire, garantie (1 − 1/e)) ; le MILP
-  demande une linéarisation (logarithme de la non-détection, ou seuils de couverture).
-- **Coût fixe des supports** : variables binaires d'ouverture de mât, avec plusieurs capteurs par mât.
-- **Contraintes d'exclusion** : une seule hauteur par position, et pas deux capteurs au même emplacement
-  physique.
-- **Métriques** : couverture pondérée, k-couverture des équipements, écart du glouton à l'optimum.
+**Semaine 4 — Intrus et multi-objectif**
+- **Évaluation par l'intrus** : probabilité de détection sur le chemin le moins surveillé, de la couronne
+  extérieure jusqu'à Bat.3, pour chaque solution du front.
+- **NSGA-II** : couverture moyenne, détection sur le pire chemin et coût comme objectifs séparés.
+
+**Questions ouvertes issues de la semaine 3**
+- **Sensibilité à la pondération** : poids par actif plutôt que par m² ; les solutions optimales
+  changent-elles ?
+- **Sensibilité à l'indépendance** des détections : comparer 1 − Π(1 − P) à max P.
+- **Resserrer la certification au-delà de B = 18** : éliminer les configurations dominées pour alléger le
+  maître, ou lui donner plus de temps.
+- **k-couverture des équipements ponctuels** (gaz, générateur), prévue au choix méthodologique n° 6.
+
 ---
 
 *Données : © Gouvernement du Québec, MRNF, licence CC BY 4.0.*
-
-
-## Validation du moteur de visibilité
-
-Le moteur calcule, pour chaque couple (position, hauteur), l'épaisseur optique τ
-de la ligne de visée vers chaque cellule dans un rayon de 400 m : τ = ∞ si un
-prisme opaque (terrain, bâti) est touché, τ = Σ k·ℓ sinon (Beer-Lambert dans la
-végétation). Parcours exact des cellules traversées (Amanatides & Woo, 1987),
-compilé avec numba : ~16 ms par calcul sur 5·10⁵ cellules.
-
-### 1. Tests analytiques — `tests/test_viewshed.py`
-
-Cinq terrains synthétiques à solution exacte, chacun isolant un terme du modèle :
-terrain plat (géométrie du disque), mur (longueur d'ombre par Thalès), dalle de
-végétation infinie (τ = k × longueur 3D, axe et diagonale), dalle partielle
-(entrée du rayon dans la canopée), exclusion du pixel du mât. Tolérance
-relative 10⁻⁵ : le parcours exact reproduit les formules à la précision float32.
-
-### 2. Comparaison externe à `gdal_viewshed`
-
-**Protocole.** Même surface (MNS entièrement opaque), mêmes hauteurs observateur
-et cible (1,0 m), courbure désactivée (`-cc 0` ; d²/2R = 1,3 cm à 400 m),
-observateur au centre de cellule. Seule différence : l'algorithme (parcours exact
-ici ; interpolation de l'horizon de Wang, Robinson & White 2000 dans GDAL).
-144 couples comparés. 32 couples exclus : capteur sous le MNS (mât dans la
-végétation), cas qu'un outil 2,5D ne peut pas représenter et que ce moteur traite
-par semi-transparence.
-
-**Critères fixés avant l'expérience et résultats**
-
-| Critère | Seuil | Résultat |
-|---|---|---|
-| κ de Cohen médian | ≥ 0,85 | 0,870 ✅ |
-| IoU médian des zones visibles | ≥ 0,85 | 0,779 ❌ |
-| Désaccords à ≤ 2 px d'une frontière | ≥ 80 % | 86,1 % ✅ |
-
-IoU agrégé (pondéré par la surface visible) : [0,804].
-
-### 3. Analyse de l'échec sur l'IoU
-
-| Hypothèse | Test | Verdict |
-|---|---|---|
-| Effet de taille : l'IoU est instable pour les petites zones visibles | ρ(IoU, part visible) = [0,79] ; IoU médian de [0,598] (< 0,5 % visible) à [0,820] (> 5 %) | Confirmée : explique la queue, pas le plateau |
-| Rayons rasants (capteur à peine au-dessus du MNS) | ρ(κ, hauteur au-dessus du MNS) = [−0,22] | Rejetée |
-| Décalage uniforme de l'horizon entre les moteurs | IoU en fonction d'une tolérance ε : non monotone | Rejetée |
-| Obstacle au voisinage immédiat du mât | 1 % des désaccords > 1 m dus à un obstacle à < 3 m | Rejetée |
-| **Un des deux moteurs est inexact** | **Arbitre exact** sur les cellules de désaccord | **Confirmée — voir ci-dessous** |
-
-**Arbitre exact.** Pour le modèle de surface en prismes (chaque pixel = prisme de
-hauteur MNS), la visibilité a une solution exacte : parcourir toutes les cellules
-traversées par le segment et comparer le point le plus bas du rayon dans chaque
-cellule au sommet du prisme. Appliqué aux cellules de désaccord :
-
-- **GDAL** : 100 % des cellules qu'il est seul à voir sont en réalité masquées.
-  Son interpolation de l'horizon « fait fuir » la visibilité par-dessus les
-  obstacles, ce qui surestime la zone visible d'environ 15 % (cas médian).
-- **Version initiale de ce moteur** (échantillonnage du rayon tous les 0,5 px) :
-  17 à 26 % des cellules qu'il était seul à voir étaient masquées, parce que
-  l'échantillonnage manquait les cellules effleurées par un coin. Soit environ 1 %
-  de faux visible. **Corrigé** en remplaçant l'échantillonnage par le parcours
-  exact, qui donne aussi la longueur exacte traversée dans la végétation et
-  divise le temps de calcul par 1,7. Après correction, accord de 100 % avec
-  l'arbitre.
-
-**Conclusion.** L'écart résiduel avec GDAL vient de l'approximation de GDAL, pas
-d'une erreur de ce moteur. Le critère d'IoU ≥ 0,85 était mal calibré : la
-variabilité entre algorithmes de visibilité est connue (Fisher, 1993) et plus
-forte que ce que j'avais anticipé en tissu urbain dense. Le modèle en prismes est
-le plus conservateur des deux (il épaissit les obstacles jusqu'à un pixel) : il
-sous-estime la couverture plutôt que de la surestimer, ce qui est le bon côté de
-l'erreur pour un système de sûreté.
-
-### Limites
-
-- Résolution de 1 m : la géométrie sous le pixel (bords de toits, cimes) n'est pas
-  représentée. Le modèle en prismes est une borne conservative.
-- Végétation : couche homogène du sol au sommet (pas de base de houppier), angle
-  des feuilles supposé sphérique (G = 0,5), acquisition sans feuilles
-  (novembre 2023) : les transmittances sont optimistes pour l'été.
-- Le mode de validation traite la végétation comme opaque. La semi-transparence
-  est validée seulement par les tests analytiques, faute de référence externe.

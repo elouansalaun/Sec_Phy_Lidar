@@ -3,6 +3,7 @@ src/pareto.py — Front couverture / coût : glouton contre optimum certifié (�
 
 Lit les sorties de src.greedy et src.milp, sans rien recalculer.
 
+Figures dans optimisation.figures_dir (versionné), tableau dans optimisation.out_dir.
   - front.png       : couverture en fonction du budget, glouton, meilleure solution et bande [LB, UB]
   - ecarts.png      : ce que perd le glouton, et ce qui reste à certifier
   - convergence.png : écart certifié au fil des itérations pour quelques budgets
@@ -152,14 +153,16 @@ def main() -> None:
 
     f = front_table(milp, gap_tol)
     f.to_csv(out / "pareto.csv", index=False)
+    figs = ROOT / oc["figures_dir"]
+    figs.mkdir(parents=True, exist_ok=True)
 
-    plot_front(f, out / "front.png")
-    plot_ecarts(f, gap_tol, out / "ecarts.png")
+    plot_front(f, figs / "front.png")
+    plot_ecarts(f, gap_tol, figs / "ecarts.png")
     # Budgets qui ont réellement itéré : le plus rapide à converger, 12, 18 et le pire écart
     it = conv.groupby("budget").iteration.max()
     worst = f.nlargest(1, "ecart_certifie").budget.tolist()
     plot_convergence(conv, sorted({it[it >= 3].index.min(), 12.0, 18.0, *worst}),
-                     out / "convergence.png")
+                     figs / "convergence.png")
 
     pd.set_option("display.width", 200)
     cols = ["budget", "glouton", "lb", "ub", "ecart_certifie", "perte_glouton",

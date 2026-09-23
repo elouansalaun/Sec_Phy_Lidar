@@ -226,6 +226,117 @@ Le glouton sert donc de **référence rapide et de borne inférieure**. Seule la
 - À budget moyen, le MILP associe un radar et des caméras qui couvrent son cône aveugle.
 - Le front présente un coude, au-delà duquel les capteurs ajoutés ne font que de la redondance.
 
+## 7. Évaluation par l'intrus (semaine 4)
+
+Les sections 3 à 6 maximisent une couverture **moyenne**. Un intrus qui connaît le dispositif ne se déplace pas au hasard : il choisit le chemin le moins surveillé. Cette section définit ce chemin et deux façons de mesurer sa détection. Les paramètres sont dans la section `intrus` de `config.yaml`.
+
+### 7.1 Diagnostic préalable : l'intérieur ne suffit pas
+
+Sur les solutions MILP de la semaine 3, avec un intrus qui part de la clôture et vise Bat.3, la détection sur le pire chemin est **nulle à tous les budgets** (B = 4, 13 et 30), pour un chemin d'une seule cellule. Un coin de Bat.3 est à 1,18 m de la clôture : l'intrus franchit le grillage et touche le mur sans traverser aucune cellule intérieure. Un actif critique collé à la clôture ne peut pas être protégé par des capteurs qui ne surveillent que l'intérieur. Le domaine de l'intrus doit donc inclure une **bande extérieure**.
+
+### 7.2 Domaine et graphe
+
+| Élément | Définition | Paramètre |
+|---|---|---|
+| Nœuds $V$ | cellules sol de l'intérieur (les $I$ de la §1, soit 9 973) ∪ cellules sol extérieures à moins de $b$ de la clôture | `bande_ext_m` $= b$ |
+| Obstacles | bâti (`bati_mask`), emprises des actifs, cellules intérieures hors masque sol : absents du graphe | — |
+| Arêtes $E$ | 8-connexité, de longueur $\ell_{uv} \in \{1, \sqrt 2\}$ m ; une diagonale est interdite si ses deux voisins orthogonaux sont des obstacles (pas de passage « entre deux coins ») | — |
+| Arêtes de franchissement $E_\times \subset E$ | arêtes dont le segment coupe la ligne de clôture | — |
+| Portails $E_\text{p} \subset E_\times$ | arêtes de franchissement qui coupent l'ouverture d'un portail : segment de clôture centré sur le point `acces`, de largeur lue dans son type (« Portail 3m ») | — |
+| Sources $V_s$ | cellules extérieures à une distance de la clôture $\ge b - 1{,}5$ m (bord extérieur de la bande) | — |
+| Cibles $V_t$ | cellules **intérieures** à moins de $d_t$ de l'emprise de l'actif `cible_intrus` | `cible_contact_m` $= d_t$ |
+
+Les cibles doivent être intérieures : une cellule extérieure peut se trouver à 1,3 m de Bat.3, et la compter comme cible ferait gagner l'intrus sans franchir la clôture.
+
+La clôture est portée par des **arêtes**, pas par des cellules. Un scénario d'intrusion choisit donc simplement un sous-ensemble d'arêtes de franchissement autorisées.
+
+**Probabilité par cellule.** Pour une solution $T$, $P_v(T) = 1 - q_v(T)$ avec $q_v(T) = \prod_{j \in T}(1 - P_{vj})$. On garde l'hypothèse d'indépendance entre capteurs de la §3.1. Les $P_{vj}$ sont calculés par les mêmes modèles de capteurs sur l'ensemble $V$ et stockés dans une matrice distincte `A_intrus.npz`. `A.npz` n'est pas modifiée : la semaine 3 reste reproductible.
+
+### 7.3 Deux profils d'intrus
+
+| Profil | Franchissements autorisés | Temps sur place au franchissement |
+|---|---|---|
+| **Déterminé** ($\mathcal{F}$) | toute arête de $E_\times$ | $t_\text{c}$ sur la clôture, $t_\text{p}$ à un portail |
+| **Opportuniste** ($\mathcal{G}$) | portails seulement ($E_\text{p}$) | $t_\text{p}$ |
+
+Tout chemin de $\mathcal{G}$ est un chemin de $\mathcal{F}$, avec le même coût. Les deux métriques ci-dessous vérifient donc toujours $\text{métrique}_\mathcal{F} \le \text{métrique}_\mathcal{G}$ : le profil déterminé est le **pire cas**.
+
+Le franchissement par un portail est jugé plus probable, parce que les portails prolongent les axes d'approche naturels. On note $\pi$ (`pi_portail`) la part d'intrus opportunistes, et on définit l'indicateur de mélange :
+
+$$
+D_\pi = \pi \cdot m_\mathcal{G} + (1 - \pi) \cdot m_\mathcal{F}.
+$$
+
+**Mise en garde.** $D_\pi$ est une espérance sur une *population* d'intrus, pas une garantie. Une solution qui laisse la clôture sans surveillance ($m_\mathcal{F} = 0$) mais verrouille les portails ($m_\mathcal{G} = 1$) obtient $D_{0{,}8} = 0{,}8$, alors qu'un intrus déterminé passe à coup sûr. La doctrine de conception d'un système de protection physique raisonne sur une **menace de référence** (*design basis threat*, Garcia 2007), donc sur le pire cas $m_\mathcal{F}$. $D_\pi$ sert à l'analyse de risque, pas au dimensionnement.
+
+### 7.4 Métrique 1 : seuil du couloir $p^\star$
+
+$$
+p^\star = \min_{\gamma : V_s \to V_t} \ \max_{v \in \gamma} P_v.
+$$
+
+**Proposition (borne inférieure).** Quelle que soit la corrélation entre les détections le long d'un chemin, l'intrus qui suit son meilleur chemin est détecté avec une probabilité $\ge p^\star$.
+
+*Preuve.* Soit $D_v$ l'événement « détecté en $v$ ». Pour tout chemin $\gamma$, l'événement « détecté sur $\gamma$ » contient chaque $D_v$, $v \in \gamma$, donc $\Pr \ge \max_{v \in \gamma} P_v \ge p^\star$. ∎
+
+Seul le modèle par cellule intervient. Il n'y a ni paramètre de vitesse, ni hypothèse sur la succession des observations. $p^\star$ ne dépend pas des temps de franchissement.
+
+**Calcul par percolation.** Soit $G_t$ le sous-graphe des nœuds tels que $P_v \le t$. La famille $G_t$ est croissante en $t$, et $p^\star$ est le plus petit $t$ pour lequel $G_t$ relie $V_s$ à $V_t$. On le trouve exactement par dichotomie sur les valeurs distinctes de $P_v$, avec un calcul de composantes connexes (`scipy.sparse.csgraph.connected_components`) à chaque pas, soit environ $\log_2 \lvert V \rvert \approx 15$ calculs. Le couloir est ensuite tracé par un plus court chemin dans $G_{p^\star}$.
+
+Interprétation : **il existe un couloir dans lequel la détection ne dépasse jamais $p^\star$.** C'est la notion de *maximal breach path* de la couverture de barrière (Meguerdichian et al., 2001a).
+
+### 7.5 Métrique 2 : exposition $\Lambda$
+
+**Modèle.** Un capteur fait une observation indépendante toutes les $\tau_\text{obs}$ secondes. L'intrus avance à vitesse $v$ et reste $\Delta t_u$ secondes dans la cellule $u$ : il y subit $n_u = \Delta t_u / \tau_\text{obs}$ observations, qu'il esquive chacune avec la probabilité $q_u$. Avec $\sigma_u = -\ln q_u$ :
+
+$$
+\Pr[\text{non-détection sur } \gamma] = \prod_{u \in \gamma} q_u^{\,n_u}
+= \exp\Big(-\sum_{u \in \gamma} \sigma_u \frac{\Delta t_u}{\tau_\text{obs}}\Big) = e^{-\Lambda(\gamma)}.
+$$
+
+**Poids des arêtes.** Le temps d'une arête est réparti à parts égales entre ses deux cellules (méthode des trapèzes) :
+
+$$
+c_{uv} = \frac{\sigma_u + \sigma_v}{2} \cdot \frac{1}{\tau_\text{obs}} \Big( \frac{\ell_{uv}}{v} + t_\times(u,v) \Big),
+\qquad
+t_\times = \begin{cases} t_\text{c} & (u,v) \in E_\times \setminus E_\text{p} \\ t_\text{p} & (u,v) \in E_\text{p} \\ 0 & \text{sinon.} \end{cases}
+$$
+
+$\Lambda^\star = \min_\gamma \Lambda(\gamma)$ se calcule par un Dijkstra multi-source (`scipy.sparse.csgraph.dijkstra`, sources $V_s$, `min_only=True`). On en déduit $P_\text{chemin} = 1 - e^{-\Lambda^\star}$.
+
+**Invariance à la résolution.** $\Lambda$ est une somme de Riemann de $\frac{1}{v\,\tau_\text{obs}} \int_\gamma \sigma \, ds$. À l'inverse, $1 - \prod_{u \in \gamma}(1 - P_u)$, qui compte une observation par cellule, double quand on divise la taille des cellules par deux. C'est la *exposure* de Meguerdichian et al. (2001b).
+
+**Limite.** Deux observations successives d'un même capteur ne sont pas indépendantes : même occultation, même angle de vue. $\Lambda$ surestime donc la détection. Mesuré sur les solutions de la semaine 3 (profil portails, B = 13), $P_\text{chemin}$ passe de 0,78 à 1,00 quand $v\,\tau_\text{obs}$ passe de 30 m à 3 m. **$p^\star$ est donc la métrique de conception, et $\Lambda$ un indicateur**, accompagné d'une analyse de sensibilité sur $\tau_\text{obs}$.
+
+### 7.6 Récapitulatif par solution
+
+| Indicateur | Rôle |
+|---|---|
+| $p^\star_\mathcal{F}$ | **pire cas garanti** : objectif de NSGA-II (option `pire_cas`) |
+| $p^\star_\mathcal{G}$ | profil opportuniste |
+| $D_\pi$ | mélange, pour l'analyse de risque (option `melange`) |
+| $P_\text{chemin}$ ($\mathcal{F}$, $\mathcal{G}$) | pour chaque $\tau_\text{obs}$ de `tau_obs_sensibilite_s` |
+| Couloir et chemin | tracés, avec leur point de franchissement de la clôture |
+
+### 7.7 Hypothèses et limites
+
+1. **Intrus omniscient.** Il connaît le dispositif, et en particulier les capteurs et leurs orientations. Hypothèse pessimiste, cohérente avec une menace de référence.
+2. **Vitesse constante, intrus debout** (cible à 1,0 m, §viewshed). Ramper réduit la silhouette et la vitesse : hors modèle.
+3. **Toute détection dans la bande extérieure compte.** En pratique, sur une voie publique, les fausses alarmes conduisent souvent à désactiver l'analyse. La largeur $b$ est un paramètre de sensibilité ; $b = 0$ reproduit le cas dégénéré de la §7.1.
+4. **Pas de capteur de clôture** (détection périmétrique sur le grillage) : seuls les capteurs du catalogue existent.
+5. **Détection et non interruption.** On ne vérifie pas que la détection arrive assez tôt pour que la réponse intervienne avant l'atteinte de la cible (détection opportune, modèle EASI ; Garcia, 2007). Ce point est reporté à la semaine 7.
+
+### 7.8 Tests prévus (`tests/test_intrus.py`)
+
+| Test | Solution de référence |
+|---|---|
+| Couloir de P connu entre deux murs | $p^\star$ = P du couloir |
+| Carte suréchantillonnée ×2 (cellules de 0,5 m) | même $\Lambda^\star$ à la discrétisation près ; le produit par cellule, lui, change |
+| Cible adjacente à la source | $\Lambda^\star = 0$, $p^\star = \max(P_s, P_t)$ |
+| Goulot unique | le chemin passe par le goulot |
+| Clôture fermée sauf un portail | $m_\mathcal{G} = m_\mathcal{F}$ quand le portail est le seul passage ; $m_\mathcal{F} \le m_\mathcal{G}$ sur une instance aléatoire |
+| Diagonale entre deux obstacles | chemin refusé |
+
 ## Références
 
 - G. L. Nemhauser, L. A. Wolsey, M. L. Fisher (1978). *An analysis of approximations for maximizing submodular set functions — I.* Mathematical Programming 14, 265–294.
@@ -233,3 +344,7 @@ Le glouton sert donc de **référence rapide et de borne inférieure**. Seule la
 - M. Sviridenko (2004). *A note on maximizing a submodular set function subject to a knapsack constraint.* Operations Research Letters 32(1), 41–43.
 - G. L. Nemhauser, L. A. Wolsey (1981). *Maximizing submodular set functions: formulations and analysis of algorithms.* Annals of Discrete Mathematics 11, 279–301.
 - R. Church, C. ReVelle (1974). *The maximal covering location problem.* Papers of the Regional Science Association 32, 101–118.
+- M. L. Garcia (2007). *Design and Evaluation of Physical Protection Systems*, 2nd ed. Butterworth-Heinemann.
+- S. Meguerdichian, F. Koushanfar, M. Potkonjak, M. B. Srivastava (2001a). *Coverage problems in wireless ad-hoc sensor networks.* IEEE INFOCOM 2001, 1380–1387.
+- S. Meguerdichian, F. Koushanfar, G. Qu, M. Potkonjak (2001b). *Exposure in wireless ad-hoc sensor networks.* ACM MobiCom 2001, 139–150.
+- E. Israeli, R. K. Wood (2002). *Shortest-path network interdiction.* Networks 40(2), 97–111.
