@@ -103,6 +103,8 @@ def accumulate(paths: list[str], grid: Grid, classes: dict[str, list[int]],
     groups = [g for g in classes if g != "bruit"]
     acc = {g: Accumulator(n) for g in groups + ["surface"]}   # surface = tout sauf bruit
     autre_multi = np.zeros(n, np.int32)   # points "autre" issus d'impulsions à retours multiples
+    first_all = np.zeros(n, np.int32)   # premiers retours, hors bruit
+    first_sol = np.zeros(n, np.int32)   # premiers retours classés sol
 
     for path in paths:
         if not tile_intersects(path, grid):
@@ -124,8 +126,13 @@ def accumulate(paths: list[str], grid: Grid, classes: dict[str, list[int]],
                 acc["surface"].add(idx[m], z[m])
                 m = np.isin(cls, classes["autre"]) & (nret > 1)
                 autre_multi += np.bincount(idx[m], minlength=n).astype(np.int32)
+                rnum = np.asarray(pts.return_number)[inside]
+                first = (rnum == 1) & ~np.isin(cls, classes["bruit"])
+                first_all += np.bincount(idx[first], minlength=n).astype(np.int32)
+                m = first & np.isin(cls, classes["sol"])
+                first_sol += np.bincount(idx[m], minlength=n).astype(np.int32)
         print(f"  {Path(path).name} : {kept:,} points dans la grille ({time.time() - t0:.0f} s)")
-    return acc, autre_multi
+    return acc, autre_multi, first_all, first_sol
 
 
 
@@ -145,6 +152,7 @@ def fill_holes(arr: np.ndarray, max_dist_px: int) -> tuple[np.ndarray, np.ndarra
 
 
 def build_products(acc: dict[str, Accumulator], autre_multi: np.ndarray,
+                   first_all: np.ndarray, first_sol: np.ndarray,
                    grid: Grid, max_dist_px: int) -> dict[str, np.ndarray]:
     shape = (grid.height, grid.width)
     r = lambda a: a.reshape(shape)
@@ -169,6 +177,8 @@ def build_products(acc: dict[str, Accumulator], autre_multi: np.ndarray,
         "autre_h": h_autre,
         "autre_frac_multi": frac_multi,
         "densite": r(acc["surface"].count).astype(np.float32) / grid.res**2,
+        "gap_fraction": (r(first_sol) + 0.5) / (r(first_all) + 1.0),
+        "n_premiers": r(first_all).astype(np.float32)
     }
 
 
@@ -200,8 +210,8 @@ def main() -> None:
                    if not p.lower().endswith(".copc.laz"))      # ignore les index QGIS
     print(f"Grille {grid.width} x {grid.height} px à {grid.res} m, {len(paths)} tuiles")
 
-    acc, autre_multi = accumulate(paths, grid, rc["classes"], rc["chunk_size"])
-    products = build_products(acc, autre_multi, grid, rc["fill_max_distance_px"])
+    acc, autre_multi, first_all, first_sol = accumulate(paths, grid, rc["classes"], rc["chunk_size"])
+    products = build_products(acc, autre_multi, first_all, first_sol, grid, rc["fill_max_distance_px"])
 
     out_dir = ROOT / rc["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -216,6 +226,13 @@ def main() -> None:
     print(f"  hauteur bâti max                    : {np.nanmax(products['bati_h']):.1f} m")
     print(f"  densité médiane                     : {np.median(products['densite']):.1f} pts/m²")
     print(f"  pixels encore vides (MNT)           : {int(np.isnan(products['mnt']).sum())} / {n}")
+    gap, h_veg = products["gap_fraction"], products["autre_h"]
+    bati, sol_nu = products["bati_mask"] == 1, (h_veg < 0.3) & (products["bati_mask"] == 0)
+    q = lambda a: np.round(np.percentile(a, [10, 50, 90]), 2)
+    print(f"  gap fraction p10/50/90 — sol nu     : {q(gap[sol_nu])}")
+    print(f"  gap fraction p10/50/90 — végétation : {q(gap[h_veg > 2])}")
+    print(f"  gap fraction p10/50/90 — bâtiments  : {q(gap[bati])}")
+    print(f"  premiers retours / px (médiane)     : {np.median(products['n_premiers']):.0f}")
     print(f"Rasters écrits dans {out_dir}")
 
 
