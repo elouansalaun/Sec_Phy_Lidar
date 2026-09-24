@@ -111,3 +111,18 @@ intrus:                          # évaluation par l'intrus (docs/formulation.md
   t_portail_s: 3.0               # temps de passage d'un portail fermé (hypothèse)
   pi_portail: 0.8                # part d'intrus opportunistes (portails seulement) — hypothèse
   objectif_nsga: "pire_cas"      # "pire_cas" (p*_F) ou "melange" (D_pi), voir §7.3
+
+
+nsga:                            # NSGA-II multi-objectif (src/nsga.py, étape 4.5)
+  out_dir: "data/processed/nsga"
+  population: 100
+  generations: 200
+  graines: [1, 2, 3, 4, 5]
+  p_croisement: 0.9
+  amorcage_s3: true              # les 58 solutions MILP et gloutonnes de la semaine 3
+  k_couverture:                  # équipements vus par ≥ k capteurs à P ≥ p_min sur part_min des cellules
+    k: 2
+    p_min: 0.5
+    part_min: 0.9
+    zones: [4, 5]                # indices de la couche couverture : Gaz Bat.3, Générateur
+    contrainte: false            # true : contrainte de NSGA-II ; false : indicateur seulement
