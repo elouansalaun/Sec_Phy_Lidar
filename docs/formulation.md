@@ -281,7 +281,7 @@ $$
 
 Seul le modèle par cellule intervient. Il n'y a ni paramètre de vitesse, ni hypothèse sur la succession des observations. $p^\star$ ne dépend pas des temps de franchissement.
 
-**Calcul par percolation.** Soit $G_t$ le sous-graphe des nœuds tels que $P_v \le t$. La famille $G_t$ est croissante en $t$, et $p^\star$ est le plus petit $t$ pour lequel $G_t$ relie $V_s$ à $V_t$. On le trouve exactement par dichotomie sur les valeurs distinctes de $P_v$, avec un calcul de composantes connexes (`scipy.sparse.csgraph.connected_components`) à chaque pas, soit environ $\log_2 \lvert V \rvert \approx 15$ calculs. Le couloir est ensuite tracé par un plus court chemin dans $G_{p^\star}$.
+**Calcul par percolation.** Soit $G_t$ le sous-graphe des nœuds tels que $P_v \le t$. La famille $G_t$ est croissante en $t$, et $p^\star$ est le plus petit $t$ pour lequel $G_t$ relie $V_s$ à $V_t$. On l'obtient exactement en une passe : les nœuds sont ajoutés par $P$ croissante dans une structure union-find, avec une super-source reliée à $V_s$ et une super-cible reliée à $V_t$. $p^\star$ est la détection du nœud dont l'ajout les relie. Le coût est en $O(\lvert E\rvert\,\alpha(\lvert V\rvert))$ après le tri, soit environ 14 ms sur le site. Un test compare le résultat à une dichotomie sur les composantes connexes. Le couloir est ensuite tracé par un plus court chemin, en mètres, dans $G_{p^\star}$.
 
 Interprétation : **il existe un couloir dans lequel la détection ne dépasse jamais $p^\star$.** C'est la notion de *maximal breach path* de la couverture de barrière (Meguerdichian et al., 2001a).
 
@@ -326,13 +326,16 @@ $\Lambda^\star = \min_\gamma \Lambda(\gamma)$ se calcule par un Dijkstra multi-s
 4. **Pas de capteur de clôture** (détection périmétrique sur le grillage) : seuls les capteurs du catalogue existent.
 5. **Détection et non interruption.** On ne vérifie pas que la détection arrive assez tôt pour que la réponse intervienne avant l'atteinte de la cible (détection opportune, modèle EASI ; Garcia, 2007). Ce point est reporté à la semaine 7.
 
-### 7.8 Tests prévus (`tests/test_intrus.py`)
+### 7.8 Tests (`tests/test_intrus.py`)
 
 | Test | Solution de référence |
 |---|---|
 | Couloir de P connu entre deux murs | $p^\star$ = P du couloir |
 | Carte suréchantillonnée ×2 (cellules de 0,5 m) | même $\Lambda^\star$ à la discrétisation près ; le produit par cellule, lui, change |
-| Cible adjacente à la source | $\Lambda^\star = 0$, $p^\star = \max(P_s, P_t)$ |
+| Nœud à la fois départ et cible | $\Lambda^\star = 0$, $p^\star = P_v$ |
+| Deux cellules de part et d'autre de la clôture | $\Lambda^\star = \sigma(\ell/v + t_\text{c})/\tau_\text{obs}$, ou $t_\text{p}$ au portail |
+| Colonne à détection certaine ($\sigma = \infty$) | $\Lambda^\star = \infty$ |
+| Union-find | égal à la dichotomie sur 20 instances aléatoires |
 | Goulot unique | le chemin passe par le goulot |
 | Clôture fermée sauf un portail | $m_\mathcal{G} = m_\mathcal{F}$ quand le portail est le seul passage ; $m_\mathcal{F} \le m_\mathcal{G}$ sur une instance aléatoire |
 | Diagonale entre deux obstacles | chemin refusé |
