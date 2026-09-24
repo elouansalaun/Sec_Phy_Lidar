@@ -19,9 +19,10 @@ Le problème est traité comme un **problème de couverture maximale (MCLP)** so
 5. [Semaine 1 — Site, rasters, validation, positions candidates](#semaine-1--site-rasters-validation-positions-candidates)
 6. [Semaine 2 — Visibilité, capteurs, matrice de couverture](#semaine-2--visibilité-capteurs-matrice-de-couverture)
 7. [Semaine 3 — Optimisation : glouton et optimum certifié](#semaine-3--optimisation--glouton-et-optimum-certifié)
-8. [Choix méthodologiques](#choix-méthodologiques)
-9. [Limites connues](#limites-connues)
-10. [Prochaines étapes](#prochaines-étapes)
+8. [Semaine 4 — L'intrus : pire chemin et optimisation multi-objectif](#semaine-4--lintrus--pire-chemin-et-optimisation-multi-objectif)
+9. [Choix méthodologiques](#choix-méthodologiques)
+10. [Limites connues](#limites-connues)
+11. [Prochaines étapes](#prochaines-étapes)
 
 ---
 
@@ -51,7 +52,7 @@ coûts de support partagés), optimum certifié par décomposition en coupes sou
 | 1 | Site, rasters MNT/MNS/hauteurs, validation, positions candidates | ✅ |
 | 2 | Moteur de visibilité exact, validation (tests analytiques, GDAL, arbitre exact), modèles caméra/radar, matrice de couverture | ✅ |
 | 3 | Formulation, glouton, optimum certifié (coupes sous-modulaires), front couverture/budget, cartes | ✅ |
-| 4 | Évaluation par l'intrus (pire chemin) + NSGA-II | |
+| 4 | Intrus : domaine étendu, pire chemin (p\* et exposition), solutions S3 face à l'intrus, NSGA-II coût/couverture/pire cas | ✅ |
 | 5–6 | Modèle de substitution (U-Net) : dataset, entraînement, accélération/précision | |
 | 7 | Boucle adversariale optimiseur ↔ intrus, analyse de sensibilité | |
 | 8 | Démo Streamlit, article | |
@@ -81,7 +82,7 @@ classe 1 avec les poteaux, fils, véhicules et équipements de toiture. Elle doi
 ```bash
 conda create -n lidar-project -c conda-forge python=3.11 \
     pdal python-pdal gdal laspy lazrs-python rasterio "geopandas>=1.0" "shapely>=2" \
-    pyproj pyogrio pyyaml matplotlib numba "scipy>=1.9" pandas pytest
+    pyproj pyogrio pyyaml matplotlib numba "scipy>=1.9" pandas pytest pymoo
 conda activate lidar-project
 ```
 
@@ -105,6 +106,11 @@ python -m src.greedy                # 9. glouton, balayage du budget (< 1 s)
 python -m src.milp                  # 10. optimum certifié, balayage du budget (≈ 3 h 30)
 python -m src.pareto                # 11. front couverture/budget, écarts, convergence
 python -m src.analyse               # 12. cartes des solutions, bilan par zone
+python -m src.intrusion             # 13. domaine de l'intrus, graphe, A_intrus (≈ 1 min)
+python -m src.intrus                # 14. pire chemin des solutions MILP (B = 4, 13, 30)
+python -m src.evaluation_intrus     # 15. les 58 solutions de la semaine 3 face à l'intrus
+python -m src.nsga                  # 16. NSGA-II, 5 graines (≈ 10 min)
+python -m src.analyse_nsga          # 17. validation contre la borne certifiée, prix de la robustesse
 ```
 
 ```
@@ -122,14 +128,21 @@ python -m src.analyse               # 12. cartes des solutions, bilan par zone
 │   ├── greedy.py               glouton au ratio gain/coût
 │   ├── milp.py                 optimum certifié par coupes sous-modulaires multi-blocs
 │   ├── pareto.py               front couverture/budget, écarts, convergence
-│   └── analyse.py              cartes des solutions, bilan par zone
+│   ├── analyse.py              cartes des solutions, bilan par zone
+│   ├── intrusion.py            domaine de l'intrus : cellules, graphe, clôture, portails, A_intrus
+│   ├── intrus.py               pire chemin : p* (union-find) et exposition (Dijkstra)
+│   ├── evaluation_intrus.py    solutions de la semaine 3 face à l'intrus
+│   ├── nsga.py                 NSGA-II coût / couverture / pire cas
+│   └── analyse_nsga.py         validation du front, prix de la robustesse
 ├── tests/
 │   ├── test_viewshed.py        solutions analytiques du moteur de visibilité
 │   ├── test_sensors.py         propriétés des modèles de capteurs, contrôle de configuration
 │   ├── test_greedy.py          glouton contre force brute, cas construits
-│   └── test_milp.py            optimum exact sur instances jouets, validité des coupes
+│   ├── test_milp.py            optimum exact sur instances jouets, validité des coupes
+│   ├── test_intrusion.py       graphe : 8-connexité, diagonales, franchissements, portails
+│   └── test_intrus.py          p*, exposition, invariance à la résolution, profils
 ├── docs/
-│   └── formulation.md          formulation mathématique et preuves (semaine 3)
+│   └── formulation.md          formulation mathématique et preuves (semaines 3 et 4)
 ├── figures/                    figures versionnées reprises dans ce README
 └── data/
     ├── raw/                    tuiles LAZ (non versionnées)
@@ -696,6 +709,217 @@ sensibilité.
 
 ---
 
+## Semaine 4 — L'intrus : pire chemin et optimisation multi-objectif
+
+La semaine 3 maximisait une couverture **moyenne**. Un intrus qui connaît le dispositif ne se déplace pas au
+hasard : il choisit le chemin le moins surveillé. Cette semaine mesure ce chemin, montre que les deux
+critères divergent, puis les optimise ensemble. La formulation complète, avec les preuves, est dans la §7 de
+[`docs/formulation.md`](docs/formulation.md).
+
+### 1. Diagnostic : surveiller l'intérieur ne suffit pas
+
+Premier essai : l'intrus part de la clôture et vise Bat.3, sur les seules cellules intérieures. La détection
+sur son meilleur chemin est **nulle à tous les budgets** (B = 4, 13 et 30), pour un chemin d'une seule
+cellule. Un coin de Bat.3 est à **1,18 m de la clôture** : l'intrus franchit le grillage et touche le mur
+sans traverser aucune cellule surveillée. C'est la faiblesse volontairement conservée en semaine 1 (choix
+méthodologique n° 7), et elle est plus sévère que prévu. **Un actif collé à la clôture ne peut pas être
+protégé par des capteurs qui ne regardent que l'intérieur.** Le domaine de l'intrus inclut donc une bande
+extérieure de 30 m.
+
+### 2. Deux profils d'intrus
+
+| Profil | Franchissement | Temps sur place |
+|---|---|---|
+| **Déterminé (F)** | n'importe où sur la clôture | 10 s pour escalader le grillage, 3 s à un portail |
+| **Opportuniste (G)** | par un des 4 portails seulement | 3 s |
+
+- **Le profil déterminé est toujours le pire cas.** Tout chemin par un portail est aussi un chemin du
+  profil déterminé, au même coût, donc m_F ≤ m_G pour les deux métriques ci-dessous.
+- **« Plus probablement par les portails »** devient un paramètre, π = 0,8, et un indicateur de mélange
+  D_π = π·m_G + (1 − π)·m_F.
+- **D_π ne sert pas à dimensionner.** Une solution qui verrouille les portails mais laisse la clôture sans
+  surveillance obtient D_0,8 = 0,8 alors qu'un intrus déterminé passe à coup sûr. On dimensionne contre une
+  *menace de référence* (Garcia, 2007), c'est-à-dire contre le profil déterminé. Le cas se produit réellement
+  (§5).
+
+### 3. Deux métriques du pire chemin (`src/intrus.py`)
+
+Les deux formulations naïves sont fausses :
+- un Dijkstra sur « coût = P » additionne des probabilités, et le résultat dépasse 1 dès 3 cellules à 0,4 ;
+- 1 − Π(1 − P) le long du chemin compte une observation par cellule, et double quand on divise la taille
+  des cellules par deux.
+
+| Métrique | Définition | Hypothèse | Rôle |
+|---|---|---|---|
+| **p\* (seuil du couloir)** | min sur les chemins de max_{v ∈ chemin} P_v | aucune le long du chemin | **Borne inférieure garantie** : « détecté quelque part » contient « détecté au meilleur point ». Métrique de conception. |
+| **Λ\* (exposition)** | min sur les chemins de Σ σ_v·Δt_v / τ_obs, avec σ = −ln(1 − P) ; P_chemin = 1 − e^(−Λ\*) | une observation indépendante toutes les τ_obs secondes | Estimation, invariante à la résolution. Indicateur. |
+
+- **p\*** se calcule exactement en une passe d'**union-find** : on ajoute les nœuds par P croissante
+  jusqu'à relier départs et cible (≈ 14 ms sur le site). C'est le *maximal breach path* de la couverture de
+  barrière (Meguerdichian et al., 2001).
+- **Λ\*** se calcule par un Dijkstra multi-source. Le poids d'une arête vaut
+  (σ_u + σ_v)/2 × (ℓ/v + t_franchissement)/τ_obs : le temps passé à escalader la clôture est exposé.
+- **Un piège de `scipy.sparse.csgraph`** : une arête de poids exactement 0, entre deux cellules que personne
+  ne voit, est traitée comme absente. Ce sont précisément les arêtes que l'intrus préfère. Chaque poids reçoit
+  10⁻¹² ; sans cela, l'intrus contournerait les zones aveugles au lieu de les emprunter.
+
+| Paramètre | Valeur | Statut |
+|---|---|---|
+| Bande extérieure | 30 m | choix, sensibilité à faire |
+| Vitesse de l'intrus | 1,5 m/s (marche) | hypothèse |
+| τ_obs | 1 s (sensibilité : 0,5 et 5 s) | hypothèse |
+| Temps d'escalade / de portail | 10 s / 3 s | hypothèses |
+| π (part d'opportunistes) | 0,8 | hypothèse |
+
+### 4. Domaine et graphe (`src/intrusion.py`)
+
+![Domaine de l'intrus](figures/domaine.png)
+
+| Élément | Valeur |
+|---|---|
+| Cellules | 27 905 : les 9 973 intérieures de la semaine 3, dans le même ordre, et 17 932 extérieures |
+| Départs / cibles (Bat.3) | 1 026 / 273 |
+| Arêtes (8-connexité) | 109 543, dont 1 512 qui franchissent la clôture et 27 par un portail |
+| `A_intrus` | 4 151 configurations × 27 905 cellules, 8,9 M non-nuls, 50 s |
+| **Non-régression** | **écart max = 0** avec `A` sur les colonnes intérieures |
+
+- **La clôture est portée par les arêtes**, pas par les cellules : une arête franchit si ses deux cellules
+  sont de part et d'autre du périmètre, et passe par un portail si son segment coupe l'ouverture (largeur lue
+  dans le type, « Portail 3m »). Un profil d'intrus n'est alors qu'un masque d'arêtes.
+- **Les cibles sont intérieures.** Une cellule extérieure est à moins de 1,5 m de Bat.3 ; la compter comme
+  cible ferait gagner l'intrus sans franchir la clôture.
+- **892 configurations nouvelles**, qui ne voient que l'extérieur (surtout des caméras tournées vers
+  l'extérieur). Leur F est nul, donc la semaine 3 les avait écartées. Elles sont indispensables pour ne pas
+  rendre le problème insoluble par construction.
+- **La bande extérieure ne contient aucun obstacle** : l'approche se fait à découvert.
+
+**Tests (`tests/test_intrusion.py`, 10 tests, et `tests/test_intrus.py`, 12 tests)** :
+- 8-connexité exacte, diagonale refusée entre deux coins d'obstacles, franchissement ⇔ changement de côté,
+  lecture de la largeur des portails ;
+- couloir entre deux murs (p\* exact), union-find égal à une dichotomie sur 20 instances aléatoires, goulot
+  obligatoire, cible inatteignable ;
+- Λ exact sur une ligne droite, **invariance à la résolution** (Λ identique à 1 m et 0,5 m, alors que le
+  produit par cellule change), temps de franchissement, détection certaine qui bloque ;
+- m_F ≤ m_G sur 20 instances aléatoires, égalité quand le portail est le seul passage.
+
+### 5. Les solutions de la semaine 3 face à l'intrus (`src/evaluation_intrus.py`)
+
+Les 58 solutions (29 budgets, MILP et glouton) sont réévaluées en environ 10 s.
+
+![Couverture et pire cas en fonction du budget](figures/budget_intrus.png)
+
+| B | Solution | F | p\*_F (déterminé) | p\*_G (portails) |
+|---|---|---|---|---|
+| 12 | MILP : 1 radar + 3 caméras | 68,2 % | **0** | 0,30 |
+| 13 | MILP : 2 radars (C020, C025 incliné à 10°) | 82,8 % | 0,96 | 0,96 |
+| 15 | MILP : + 1 caméra | 84,2 % | 0,96 | 0,96 |
+| **16** | **MILP : radar C025 → C026, + 2 caméras de toit** | 84,9 % | **0,29** | 0,98 |
+| 16 | Glouton : garde C025, + 1 caméra | 84,7 % | 0,96 | 0,96 |
+| 18 | MILP | 86,1 % | **0,29** | 0,98 |
+| 19 | MILP : 3 radars | 86,5 % | 0,61 | 0,98 |
+
+**Lecture**
+1. **Couvrir n'est pas protéger.** Jusqu'à B = 12, aucune solution n'arrête un intrus déterminé (p\*_F = 0),
+   alors que F atteint déjà 68 %.
+2. **Optimiser la moyenne peut ouvrir un trou.** À B = 16, l'optimum de F gagne 0,6 point en déplaçant un
+   radar, et perd **67 points** de détection garantie. La carte montre pourquoi : le radar déplacé laisse la
+   zone extérieure sud sans surveillance, et l'intrus y passe pour atteindre le coin de Bat.3 à 1,18 m de la
+   clôture. Aux budgets 16, 18 et 19, **le glouton est plus robuste que l'optimum**.
+3. **Le piège de D_π se produit.** À B = 16, un intrus par les portails est détecté à 0,98, un intrus
+   déterminé à 0,29 : D_0,8 = 0,84 masque le trou.
+4. **L'exposition sature.** Dès que p\* dépasse 0,9, P_chemin vaut 1,00 à τ_obs = 1 s, et encore 0,98 à
+   τ_obs = 5 s : l'indépendance entre observations successives multiplie les chances de détection. Seul p\*
+   distingue encore les dispositifs.
+
+![Le trou ouvert par l'optimum de F à B = 16](figures/chemins_decouplage.png)
+
+![Couverture moyenne contre pire cas](figures/F_vs_pstar.png)
+
+Aucune solution MILP n'est pourtant *dominée* sur (coût, F, p\*_F) : la solution de B = 16 a le meilleur F à
+son coût. Ce n'est pas une erreur du MILP, c'est un **arbitrage** qu'un optimiseur mono-objectif ne peut pas
+exposer. D'où NSGA-II.
+
+### 6. NSGA-II (`src/nsga.py`)
+
+| Élément | Choix |
+|---|---|
+| Objectifs | coût ↓, F ↑, p\*_F ↑ |
+| Variables | 4 151 bits, un par configuration de `A_intrus` |
+| Croisement | enfant = sous-ensemble aléatoire de l'union des parents |
+| Mutation | ajout, retrait, remplacement, ou **voisinage** (même emplacement : autre hauteur, capteur, azimut ou inclinaison) |
+| Réparation | (C3), (C4), coût ≤ 30, par retraits **aléatoires** |
+| Amorçage | les 58 solutions de la semaine 3 + individus aléatoires réparés |
+| k-couverture des équipements | indicateur (voir ci-dessous) |
+| Réglages | population 100, 200 générations, 5 graines ; ≈ 2 min par graine |
+
+- **Des opérateurs pour des solutions creuses.** Une solution contient 2 à 10 bits sur 4 151 : une mutation
+  bit à bit n'ajouterait presque que des capteurs. Le croisement et la mutation travaillent donc sur des
+  ensembles.
+- **Réparation aléatoire plutôt que gloutonne.** Retirer d'abord la configuration au plus faible gain de F
+  éliminerait systématiquement les caméras extérieures, dont F est nul mais qui peuvent faire p\*.
+- **Une évaluation prend environ 6 ms** (détection, F, p\* par union-find) : 20 000 évaluations par
+  graine restent abordables.
+
+### 7. Validation et résultats (`src/analyse_nsga.py`)
+
+![Front coût / couverture / pire cas](figures/front_nsga.png)
+
+**Validation contre la semaine 3**
+- **Aucune des 175 solutions du front global ne dépasse la borne UB certifiée.** C'est le contrôle
+  d'absence de bug, rare pour une métaheuristique.
+- **NSGA-II améliore la meilleure solution connue à 6 budgets** (21, 23, 24, 25, 26 et 29 ; de +0,03 à
+  +0,47 point de F), précisément ceux où le MILP s'était arrêté sur sa limite de temps. L'écart résiduel à la
+  borne UB est au plus de 2,6 points.
+- **Réserve** : aux autres budgets, l'écart nul à la meilleure solution connue vient en partie de
+  l'amorçage. Ce n'est pas une preuve que NSGA-II l'aurait retrouvée seul.
+- **12 des 58 solutions de la semaine 3 sont dominées** par le front (4 MILP : B = 21, 24, 25, 26 ; 8
+  gloutonnes).
+
+**Prix de la robustesse**
+
+![Prix de la robustesse](figures/prix_robustesse.png)
+
+| Budget | Meilleur F | Meilleur F avec p\*_F ≥ 0,95 | Prix |
+|---|---|---|---|
+| < 12,8 | jusqu'à 68,2 % | **aucune solution** | — |
+| 13 à 15, 17, 20 à 30 | — | identique | **0 point** |
+| 16 | 84,9 % | 84,7 % | 0,17 point |
+| 18 | 86,1 % | 85,6 % | 0,48 point |
+| 19 | 86,5 % | 85,9 % | 0,62 point |
+
+- **Il existe un budget seuil de robustesse : 12,8 unités**, soit deux radars sur mâts intérieurs. En
+  dessous, aucun dispositif ne garantit p\*_F ≥ 0,9, quelle que soit sa couverture.
+- **Au-delà, la robustesse coûte moins de 0,7 point de F.** Les trous de la semaine 3 n'étaient pas le prix
+  d'une meilleure couverture : rien ne poussait l'optimiseur à les éviter.
+- **Les configurations qui ne voient que l'extérieur ne servent presque jamais** (3 solutions sur 175) :
+  les radars sur mâts intérieurs couvrent déjà la bande extérieure.
+- **La k-couverture des équipements n'est atteinte qu'à partir de 25,6 unités** (4 radars : au moins 2
+  capteurs à P ≥ 0,5 sur 90 % des cellules du gaz et du générateur). En contrainte dure, elle aurait vidé le
+  front en dessous : elle reste un indicateur, activable dans `config.yaml`.
+
+**Convergence**
+
+![Convergence de NSGA-II](figures/hv.png)
+
+L'hypervolume final vaut 0,562 ± 0,0018 sur 5 graines, mais **les courbes montent encore à 20 000
+évaluations**, par paliers : la convergence n'est pas atteinte. Le front publié est une approximation,
+encadrée par la borne certifiée sur (coût, F).
+
+### 8. Ce qu'il faut retenir de la semaine 4
+
+1. **Couvrir n'est pas protéger.** 68 % de couverture pondérée peuvent laisser un couloir entièrement
+   aveugle.
+2. **Optimiser la moyenne peut dégrader le pire cas** : +0,6 point de F, −67 points de détection garantie.
+3. **La robustesse a un seuil, pas un coût.** Rien n'est possible sous 12,8 unités ; au-delà, l'exiger coûte
+   moins de 0,7 point. Elle doit figurer dans le cahier des charges.
+4. **Une borne garantie vaut mieux qu'une probabilité sous hypothèses** : l'exposition sature et ne
+   distingue plus rien, p\* reste discriminant.
+5. **La géométrie du site impose de détecter à l'extérieur** : un actif à 1,18 m de la clôture ne se protège
+   pas depuis l'intérieur.
+6. **Un mélange de profils masque le pire cas** (D = 0,84 pour une détection garantie de 0,29).
+
+---
+
 ## Choix méthodologiques
 
 **Organisation**
@@ -778,6 +1002,23 @@ sensibilité.
     présentée comme optimale sans preuve.
 34. **Coupes par blocs spatiaux** : un compromis mesuré entre la force des coupes et la taille du maître.
 
+**Intrus (semaine 4)**
+35. **Intrus omniscient et menace de référence** : on dimensionne contre l'intrus déterminé (pire cas) ;
+    le mélange D_π sert à l'analyse de risque, pas à la conception.
+36. **La clôture est un ensemble d'arêtes** : un profil d'intrus n'est qu'un masque d'arêtes autorisées.
+37. **Deux métriques qui encadrent** : p\* est une borne inférieure sans hypothèse le long du chemin, Λ une
+    estimation sous indépendance. La conception suit p\*.
+38. **Exposition écrite en temps** : le franchissement de la clôture est exposé, et la métrique est
+    invariante à la résolution (vérifié par un test).
+39. **Une matrice distincte pour l'intrus** (`A_intrus`), avec un contrôle de non-régression exact : la
+    semaine 3 reste reproductible à l'identique.
+40. **Catalogue étendu** aux configurations qui ne voient que l'extérieur, écartées en semaine 3 parce que
+    leur F est nul.
+41. **NSGA-II validé contre une borne certifiée**, avec des opérateurs sur des ensembles creux et une
+    réparation aléatoire, qui ne pénalise pas les capteurs à F nul.
+42. **k-couverture en indicateur plutôt qu'en contrainte**, après avoir mesuré qu'elle n'est réalisable
+    qu'à partir de 25,6 unités.
+
 ## Limites connues
 
 - Végétation non séparée des autres objets de classe 1 (poteaux, véhicules, clôtures).
@@ -801,26 +1042,36 @@ sensibilité.
 - **Indépendance des détections** entre capteurs : les corrélations réelles (brouillard, intrus qui rampe)
   rendent 1 − Π(1 − P) optimiste. La vraie valeur se situe entre max P et 1 − Π(1 − P).
 - **Visibilité statique** : ni végétation saisonnière, ni véhicules stationnés.
-- **Détection moyenne, pas pire cas** : un adversaire qui connaît le dispositif choisit son chemin
-  (semaine 4).
+- **Intrus** : omniscient, debout, à vitesse constante ; ramper (silhouette et vitesse réduites) est hors
+  modèle. Pas de capteur de clôture.
+- **Détection n'est pas interruption** : on ne vérifie pas que la détection arrive assez tôt pour que la
+  réponse intervienne avant l'atteinte de la cible (modèle EASI).
+- **Toute détection dans la bande extérieure compte**, alors que sur une voie publique les fausses alarmes
+  conduisent souvent à désactiver l'analyse. La largeur de 30 m n'a pas encore été soumise à l'analyse de
+  sensibilité.
+- **τ_obs, temps de franchissement et π sont des hypothèses** ; l'exposition en dépend fortement, p\* non.
+- **NSGA-II non convergé** à 20 000 évaluations (l'hypervolume monte encore) et amorcé par les solutions de
+  la semaine 3 : le front est une approximation, encadrée par la borne certifiée sur (coût, F).
+- **p\* est constant par paliers** : la sélection de NSGA-II manque de signal entre deux solutions de même p\*.
 - **Pondération par m²** : Bat.3 porte 67 % de l'objectif et oriente toutes les solutions.
 - **Certification incomplète au-delà de B = 18** : l'écart reste entre 1 et 2,8 % dans la limite de 15 min
   par budget.
 
 ## Prochaines étapes
 
-**Semaine 4 — Intrus et multi-objectif**
-- **Évaluation par l'intrus** : probabilité de détection sur le chemin le moins surveillé, de la couronne
-  extérieure jusqu'à Bat.3, pour chaque solution du front.
-- **NSGA-II** : couverture moyenne, détection sur le pire chemin et coût comme objectifs séparés.
+**Semaines 5–6 — Modèle de substitution**
+- **U-Net** prédisant la carte d'épaisseur optique τ à partir d'un patch local (MNS, bâti, végétation,
+  hauteur de l'observateur) ; dataset tiré des 176 couples exacts et de positions supplémentaires.
+- **Étude accélération / précision** : IoU et erreur sur P contre le moteur exact, puis effet sur les
+  décisions (p\*, front NSGA-II).
 
-**Questions ouvertes issues de la semaine 3**
-- **Sensibilité à la pondération** : poids par actif plutôt que par m² ; les solutions optimales
-  changent-elles ?
-- **Sensibilité à l'indépendance** des détections : comparer 1 − Π(1 − P) à max P.
-- **Resserrer la certification au-delà de B = 18** : éliminer les configurations dominées pour alléger le
-  maître, ou lui donner plus de temps.
-- **k-couverture des équipements ponctuels** (gaz, générateur), prévue au choix méthodologique n° 6.
+**Questions ouvertes**
+- **Sensibilité** : largeur de la bande extérieure, τ_obs, pondération par actif plutôt que par m²,
+  indépendance des détections (max P contre 1 − Π(1 − P)).
+- **NSGA-II plus long** (500 générations) ou sans amorçage, pour mesurer ce que l'heuristique trouve seule.
+- **Option `objectif_nsga: "melange"`** du bloc `intrus` : prévue dans la formulation, pas encore branchée.
+- **Semaine 7** : détection opportune (EASI), et boucle adversariale exacte par interdiction de plus court
+  chemin (Israeli et Wood, 2002), l'exposition étant linéaire en x.
 
 ---
 
