@@ -340,6 +340,114 @@ $\Lambda^\star = \min_\gamma \Lambda(\gamma)$ se calcule par un Dijkstra multi-s
 | Clôture fermée sauf un portail | $m_\mathcal{G} = m_\mathcal{F}$ quand le portail est le seul passage ; $m_\mathcal{F} \le m_\mathcal{G}$ sur une instance aléatoire |
 | Diagonale entre deux obstacles | chemin refusé |
 
+## 8. Modèle de substitution : carte de potentiel d'implantation (semaines 5–6)
+
+Les sections 3 à 7 évaluent 176 couples (position, hauteur) choisis à la main en semaine 1. Cette section remplace la question « quelle visibilité depuis ce candidat ? » par « quelle visibilité depuis **chaque** position de la zone ? ». Un réseau de neurones y apporte un gain de structure, et pas seulement de constante. Les paramètres sont dans la section `surrogate` de `config.yaml`.
+
+### 8.1 Diagnostic préalable : pas de goulot sur le catalogue
+
+Le plan initial prévoyait un U-Net qui prédit la carte de visibilité d'un observateur, pour accélérer le calcul des viewsheds. Les mesures ont été faites sur la même machine (2 cœurs CPU) pour que les rapports soient comparables.
+
+| Mesure | Valeur |
+|---|---|
+| Calculs de τ nécessaires au catalogue | 176 : τ ne dépend ni du capteur ni de l'orientation (§ semaine 2) |
+| Part de τ dans la construction de `A` | 96 % (42 s sur 43,5 s) |
+| τ sur le disque de 400 m | 220 ms |
+| τ sur les 27 905 cellules du domaine seulement | 6,4 ms, identique bit à bit |
+| U-Net 1,9 M paramètres (7,8 M), une carte 816 × 816 | 582 ms (2 070 ms) |
+
+1. **Il n'y a pas de goulot à accélérer.** Les « milliers de viewsheds » n'existent pas : l'orientation et le type de capteur sont analytiques.
+2. **À résolution égale, un U-Net est 2,6 à 9 fois plus lent que le moteur exact**, et il n'est pas exact. Un surrogate par observateur serait du ML plaqué.
+
+Le coût exact ne devient prohibitif que quand on veut la visibilité depuis **toutes** les positions d'une zone. C'est le problème du *total viewshed*, dont le coût est en $O(N R^2)$ pour $N$ positions et une portée de $R$ cellules (Tabik et al., 2015). Sur l'emprise actuelle (411 640 positions valides, 5 hauteurs, $R$ = 150 m), il faut environ 8 h sur 2 cœurs, soit 70 ms par position. Un réseau entièrement convolutif produit toute la carte en **une passe**, en $O(N)$.
+
+### 8.2 Cible
+
+Soit un observateur $o$ à la hauteur $h$ au-dessus de la surface opaque ($z_o = z_\text{opaque}(o) + h$ : un toit ou le sol). Le disque de rayon $R$ autour de $o$ est découpé en bins $(a, s)$ : des anneaux de distance $a$ et des secteurs d'azimut $s$ de $360°/n_s$, centrés sur les azimuts des caméras. On définit :
+
+$$
+V_{h,a,s}(o) = \frac{1}{\lvert \mathcal{B}_{a,s} \rvert} \sum_{j \in \mathcal{B}_{a,s} \cap \text{Sol}} T_{oj}, \qquad T_{oj} = e^{-\tau_{oj}} \in [0, 1],
+$$
+
+où $\lvert \mathcal{B}_{a,s} \rvert$ est le nombre de cellules du bin, qui ne dépend pas du terrain. $V$ est donc la **part de la surface du bin qui est du sol visible**, pondérée par la transmittance, dans $[0, 1]$.
+
+| Choix | Valeur | Justification |
+|---|---|---|
+| $R$ | 150 m | $R_{90}$ du radar ; caméra télé : $r_\text{design} \approx$ 143 m |
+| Anneaux | 0–50, 50–150 m | grand angle ≈ 38 m, standard ≈ 67 m : sépare les usages courts et longs |
+| Secteurs | 8 × 45° | centrés sur `camera_azimuths_deg` : $V_{h,\cdot,s}$ note directement une caméra orientée en $s$ |
+| Hauteurs | 2, 4, 6, 8, 10 m | union des hauteurs de toit et de mât du catalogue |
+| $T$ | $e^{-\tau}$, $\alpha = 1$ | aller simple (caméra). La cible est **géométrique** : les lois de détection restent analytiques et s'appliquent ensuite |
+
+Soit 80 sorties par position. $\tau$ est calculé par le noyau `ray_tau` de `src/viewshed.py` : les étiquettes sont exactes par construction, et un test le vérifie.
+
+**Propriétés utilisées ensuite.**
+
+1. **Équivariance par translation.** $V$ ne dépend que du terrain autour de $o$. La carte $o \mapsto V(o)$ est donc un opérateur équivariant par translation des rasters : c'est exactement ce que représente un réseau entièrement convolutif. Son champ récepteur doit couvrir au moins $2R + 1$ = 301 cellules.
+2. **Invariance verticale.** Décaler toutes les altitudes d'une constante ne change pas $V$. Les entrées sont donc des altitudes relatives.
+3. **Équivariance D4.** Une rotation de 90° du terrain décale les secteurs de $+2$ ; un miroir est-ouest les envoie de $s$ vers $-s \bmod 8$. Les 8 éléments du groupe diédral agissent exactement sur la grille : ils fournissent une augmentation de données sans approximation (Cohen et Welling, 2016). Deux tests le vérifient.
+4. **Monotonie en $h$ : seulement sans végétation.** Sans végétation, le rayon monte en tout point quand $z_o$ monte, donc $V$ est non décroissant en $h$. Avec végétation, un rayon entièrement sous la canopée parcourt $\sqrt{1 + \text{pente}^2}$ m par mètre horizontal, et la pente augmente avec $h$ : $V$ peut décroître. Le test le montre sur une colonne de canopée. **Le réseau ne doit donc pas être contraint à être monotone.**
+
+### 8.3 Pourquoi pas une carte par observateur
+
+Prédire $T_{oj}$ pour tout $j$ du disque revient à produire une image par observateur. On retombe alors sur le coût de 8.1, avec en plus une cible dominée par les zéros : sur un candidat typique, 86 % du disque est occulté, et la transmittance médiane des rayons qui traversent de la végétation vaut 0,01. L'agrégation par bins garde l'information utile à la décision (quelle surface, dans quelle direction, à quelle distance) et rend la sortie dense et lisse.
+
+### 8.4 Données et découpage spatial
+
+| Ensemble | Définition | Taille |
+|---|---|---|
+| Positions valides | disque complet dans la grille (à plus de $R$ du bord) | 411 640 |
+| **Test** | emprise du site + 50 m ; calcul exact un pixel sur deux | 71 980 positions, dont 18 056 étiquetées |
+| Tampon | 30 m autour du bloc test, exclu | — |
+| Validation | tuiles de 100 m tirées au hasard (15 %) hors tampon | 52 300 positions |
+| Entraînement | le reste | 287 360 positions |
+
+- **Échantillonnage stratifié** : 30 000 observateurs (entraînement et validation), répartis en toits (25 %), sol dégagé (40 %) et sol sous végétation (35 %). Tirer uniformément sous-représenterait les toits (23 % de la zone), qui sont pourtant des supports privilégiés.
+- **Le réseau prédit une carte dense, mais la perte n'est évaluée qu'aux pixels étiquetés** (supervision creuse, environ 9 % des positions). Elle n'est comptée que sur les pixels dont tout le champ récepteur est dans la tuile, pour ne pas apprendre les effets de bord du rembourrage.
+- **Pourquoi un découpage spatial.** Deux positions voisines de 1 m ont des étiquettes presque identiques. Un tirage aléatoire des cellules mesurerait une interpolation, pas une généralisation (Roberts et al., 2017). Le bloc test contient le site : c'est aussi là qu'on validera la décision (§8.5).
+- **Fuite résiduelle, assumée.** Avec $R$ = 150 m et une emprise d'environ 1 km², les disques des positions de test chevauchent du terrain vu à l'entraînement. Le test mesure donc la généralisation à des **positions** nouvelles sur un terrain en partie connu, pas à un site nouveau. Le tampon de 30 m supprime l'autocorrélation directe des étiquettes, pas celle des entrées.
+
+### 8.5 Évaluation
+
+**Références de comparaison.** Un score de rang de 0,9 ne veut rien dire sans point de comparaison. Le réseau est donc comparé à deux références :
+- **B0** : la moyenne par strate et par hauteur ;
+- **B1** : un gradient boosting sur des descripteurs locaux faits à la main (relief relatif, fraction de bâti et de végétation par anneau et par secteur).
+
+**Précision**, sur le bloc test :
+- erreur absolue moyenne sur $V$, par hauteur, strate et anneau ;
+- corrélation de rang de Spearman sur le potentiel total $\bar V_h = \sum_{a,s} \lvert \mathcal{B}_{a,s}\rvert V_{h,a,s} / \sum \lvert\mathcal{B}\rvert$ ;
+- **rappel top-K** : parmi les K meilleures positions exactes (après suppression des non-maxima à 10 m) sur les supports possibles du site, part retrouvée dans le top-K prédit.
+
+**Accélération.** Soit $c_e$ et $c_n$ les coûts par position du calcul exact et du réseau, et $C_0$ le coût fixe du jeu de données et de l'entraînement. Le réseau est rentable au-delà de
+
+$$
+N^\star = \frac{C_0}{c_e - c_n}
+$$
+
+positions, exprimé en km² à 1 m. Tout est mesuré sur la même machine, sur CPU et sur MPS.
+
+**Décision (étape 6.3).** On génère des candidats à partir de la carte prédite : top-K par support possible, avec suppression des non-maxima. On construit leur matrice `A` avec le moteur **exact**, puis on relance le glouton et NSGA-II. On compare F, $p^\star_\mathcal{F}$ et le front au catalogue de la semaine 1, et à un catalogue tiré de la carte **exacte** du bloc test (borne supérieure de ce que le réseau peut apporter).
+
+### 8.6 Hypothèses et limites
+
+1. **Une seule zone d'environ 1 km²**, en conditions sans feuilles (novembre) : la généralisation à un autre site ou à la saison feuillée n'est pas testée.
+2. **Cible géométrique** : $\alpha = 1$ pour tous les capteurs. Le radar ($\alpha_r = 0{,}3$, aller-retour) voit à travers la végétation autrement ; la cible sert à **classer** les positions, et le calcul exact reprend la main pour la décision.
+3. **Hauteurs discrètes** (5 valeurs), comme le catalogue.
+4. **Positions à moins de $R$ du bord exclues** : la carte prédite n'est fiable qu'à l'intérieur de l'emprise valide.
+
+### 8.7 Tests (`tests/test_surrogate_data.py`)
+
+| Test | Solution de référence |
+|---|---|
+| Noyau `potentiel` contre agrégation de `optical_depth` (3 terrains aléatoires, 3 hauteurs) | égalité à 10⁻⁶ |
+| Terrain plat sans végétation | $V = 1$ dans chaque bin |
+| Géométrie des bins | nord = secteur 0, est = secteur 2 ; secteurs équilibrés à 10 % près |
+| Rotation de 90° du terrain | secteurs décalés de $+2$ |
+| Miroir est-ouest | $s \to -s \bmod 8$ |
+| Sans végétation | $V$ non décroissant en $h$ |
+| Colonne de canopée | $V$ décroît de $h$ = 2 à 5 m (contre-exemple de la monotonie) |
+| Découpage | site entièrement en test ; aucune position d'entraînement à moins de 30 m du test ; disques complets |
+
 ## Références
 
 - G. L. Nemhauser, L. A. Wolsey, M. L. Fisher (1978). *An analysis of approximations for maximizing submodular set functions — I.* Mathematical Programming 14, 265–294.
@@ -351,3 +459,7 @@ $\Lambda^\star = \min_\gamma \Lambda(\gamma)$ se calcule par un Dijkstra multi-s
 - S. Meguerdichian, F. Koushanfar, M. Potkonjak, M. B. Srivastava (2001a). *Coverage problems in wireless ad-hoc sensor networks.* IEEE INFOCOM 2001, 1380–1387.
 - S. Meguerdichian, F. Koushanfar, G. Qu, M. Potkonjak (2001b). *Exposure in wireless ad-hoc sensor networks.* ACM MobiCom 2001, 139–150.
 - E. Israeli, R. K. Wood (2002). *Shortest-path network interdiction.* Networks 40(2), 97–111.
+- S. Tabik, A. R. Cervilla, E. Zapata, L. F. Romero (2015). *Efficient data structure and highly scalable algorithm for total-viewshed computation.* IEEE JSTARS 8(1), 304–310.
+- O. Ronneberger, P. Fischer, T. Brox (2015). *U-Net: Convolutional networks for biomedical image segmentation.* MICCAI 2015, 234–241.
+- T. Cohen, M. Welling (2016). *Group equivariant convolutional networks.* ICML 2016, 2990–2999.
+- D. R. Roberts et al. (2017). *Cross-validation strategies for data with temporal, spatial, hierarchical, or phylogenetic structure.* Ecography 40(8), 913–929.

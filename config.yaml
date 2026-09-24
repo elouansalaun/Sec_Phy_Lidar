@@ -126,3 +126,21 @@ nsga:                            # NSGA-II multi-objectif (src/nsga.py, étape 4
     part_min: 0.9
     zones: [4, 5]                # indices de la couche couverture : Gaz Bat.3, Générateur
     contrainte: false            # true : contrainte de NSGA-II ; false : indicateur seulement
+
+
+surrogate:                       # modèle de substitution : carte de potentiel (docs/formulation.md, §8)
+  out_dir: "data/processed/surrogate"
+  rayon_m: 150                   # R : portée utile (R90 du radar, caméra télé ≈ 143 m)
+  anneaux_m: [0, 50, 150]        # anneaux de distance (grand angle ≈ 38 m, standard ≈ 67 m)
+  n_secteurs: 8                  # secteurs de 45° centrés sur les azimuts des caméras
+  hauteurs_m: [2, 4, 6, 8, 10]   # au-dessus de la surface opaque (toits : 2-4 m, mâts : 4-10 m)
+  test:
+    marge_m: 50                  # bloc test = emprise du site + marge
+    tampon_m: 30                 # bande exclue autour du bloc test (autocorrélation des étiquettes)
+  validation:
+    tuile_m: 100                 # tuiles tirées au hasard hors tampon
+    part: 0.15
+  echantillonnage:
+    n_observateurs: 30000        # entraînement + validation
+    proportions: {toit: 0.25, sol_degage: 0.40, sol_vegetation: 0.35}
+  test_pas_px: 2                 # bloc test calculé exactement un pixel sur deux
