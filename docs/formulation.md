@@ -434,6 +434,9 @@ positions, exprimé en km² à 1 m. Tout est mesuré sur la même machine, sur C
 2. **Cible géométrique** : $\alpha = 1$ pour tous les capteurs. Le radar ($\alpha_r = 0{,}3$, aller-retour) voit à travers la végétation autrement ; la cible sert à **classer** les positions, et le calcul exact reprend la main pour la décision.
 3. **Hauteurs discrètes** (5 valeurs), comme le catalogue.
 4. **Positions à moins de $R$ du bord exclues** : la carte prédite n'est fiable qu'à l'intérieur de l'emprise valide.
+5. **Score pondéré (§8.9)** : il suppose la visibilité et le poids indépendants à l'intérieur d'un bin.
+6. **Sélection des K meilleures positions une par une** : elle ignore la sous-modularité de la couverture. Une carte par position ne suffit pas pour choisir un ensemble.
+7. **Statistique limitée** : une graine de NSGA-II en §8.9, 5 tirages pour les témoins aléatoires.
 
 ### 8.7 Tests (`tests/test_surrogate_data.py`)
 
@@ -447,6 +450,109 @@ positions, exprimé en km² à 1 m. Tout est mesuré sur la même machine, sur C
 | Sans végétation | $V$ non décroissant en $h$ |
 | Colonne de canopée | $V$ décroît de $h$ = 2 à 5 m (contre-exemple de la monotonie) |
 | Découpage | site entièrement en test ; aucune position d'entraînement à moins de 30 m du test ; disques complets |
+
+### 8.8 Résultats : références, réseaux et horizons denses (étapes 5.3 et 6.1)
+
+Tous les chiffres portent sur le bloc test, à $h$ = 6 m. Les coûts sont mesurés sur un MacBook Air : les réseaux sur MPS, le reste sur CPU.
+
+| Modèle | EAM | EAM 0–50 m | Spearman sur $\bar V$ | Regret top-20 | Coût par position |
+|---|---|---|---|---|---|
+| Calcul exact (`potentiel`) | 0 | 0 | 1 | 0 | 8 800 µs |
+| B0 : moyenne par strate | 0,144 | 0,206 | 0,46 | 66 % | ≈ 0 |
+| B1 : horizons exacts + boosting | 0,044 | 0,051 | 0,926 | 9,7 % | 221 µs |
+| **B2 : pyramide + boosting** | **0,042** | **0,051** | **0,936** | **6,1 %** | 116 µs |
+| U-Net brut | 0,072 | 0,085 | 0,796 | 11 % | 0,2 µs |
+| U-Net physique | 0,053 | 0,060 | 0,878 | 15 % | 27 µs |
+
+**U-Net brut : sous-apprentissage, pas décalage de domaine.** L'EAM de validation est de 0,051 contre 0,029 pour B1, et le rapport test/validation est le même pour les deux modèles (1,41 et 1,51). La perte d'entraînement reste au-dessus de l'erreur de validation, et la courbe plafonne dès 1 500 itérations. Un réseau entièrement convolutif doit reconstruire un maximum le long de rayons, divisé par la distance, avec des convolutions 3 × 3 : c'est une question de **biais inductif**, pas de réglage. Deux pièges ont été évités en chemin :
+- GroupNorm normalise sur toute l'image : un test de champ récepteur l'a révélé, et BatchNorm le remplace ;
+- le champ récepteur a été dimensionné à exactement $2R + 1$ = 301 px, et un test le vérifie.
+
+**Horizons denses par pyramide log-polaire (`src/horizons.py`).** Pour chaque bande $b$, on lit des blocs de $p_b \times p_b$ cellules ($p_b$ = 1, 3, 5, 9, 15) tous les $p_b$ pixels, à partir de filtres glissants max et moyenne calculés une fois pour toute la grille.
+- **Coût** : 1 204 lectures par position au lieu de 70 680 ; 19 µs contre 727 µs pour l'horizon exact aux 5 hauteurs, soit **×38** (mesuré sur 2 cœurs CPU, positions contiguës).
+- **Erreur sur l'angle d'horizon** : 0,7 à 1,7° en moyenne par bande, 95ᵉ centile ≤ 4,8°, sans biais. La bande 0–10 m est exacte.
+- **Pavage** : exact dans chaque bande. Aux frontières de bandes, 4,6 % des cellules du disque ne sont pas couvertes et 2,7 % le sont deux fois.
+- **L'erreur n'a pas de signe fixe** : la cellule la plus haute d'un bloc peut être plus proche ou plus loin que son centre. L'approximation n'est donc **pas** prudente.
+
+**B2 isole le coût de l'approximation, et il est nul.** Avec des horizons à $h$ = 0, l'EAM vaut 0,061. Avec des horizons à chaque hauteur, 0,058. En ajoutant **la part de sol par bin**, qui borne directement $V$, elle tombe à 0,042 et égale B1. Il manquait une variable, pas de la précision géométrique.
+
+**U-Net physique (`src/surrogate_physique.py`).** Le réseau est conditionnel en $h$ : 166 canaux d'entrée (5 de base, $h$, 80 horizons, 80 moyennes), 16 sorties, une passe par hauteur, 3 niveaux, champ récepteur de 85 px. Les horizons réduisent l'EAM de 26 % par rapport au U-Net brut (0,072 → 0,053), sans atteindre B2. La validation descendait encore en fin d'entraînement (0,0446 → 0,0397 entre 1 500 et 3 000 itérations) : c'est une réserve, mais même prolongée, la tendance reste au-dessus de B2.
+
+**Point d'équilibre** (§8.5). Coûts fixes : données (≈ 4 min) + entraînement. B1 est rentable au-delà de ≈ 38 000 positions (0,04 km²), le U-Net brut au-delà de ≈ 170 000 (0,17 km²). Sur le seul temps de calcul, le U-Net ne devient préférable à B1 qu'au-delà d'environ 6 km². **À l'échelle du site, c'est la précision qui départage, et B2 est retenu.**
+
+### 8.9 Validation par la décision (étape 6.3, `src/catalogue_surrogate.py`, `src/catalogue_reduit.py`)
+
+**Protocole.** Les catalogues de positions candidates ont les mêmes effectifs que celui de la semaine 1 (27 mâts, 34 toits). Ils sont choisis sur les positions possibles du bloc test, au pas de 2 m, selon les règles de la semaine 1. Chaque catalogue est ensuite évalué **exactement et de la même façon** : matrice sur le domaine de l'intrus, glouton sur 29 budgets, $p^\star_\mathcal{F}$ et $p^\star_\mathcal{G}$, NSGA-II amorcé par ses propres solutions gloutonnes. Deux témoins encadrent la comparaison : un **oracle**, qui applique le même critère aux valeurs exactes, et un **tirage aléatoire** avec le même espacement minimal.
+
+**1. Potentiel géométrique $\bar V$ : échec.**
+
+| Catalogue (61 positions) | F moyen (glouton) | F, B = 13 | $p^\star_\mathcal{F}$, B = 13 | Hypervolume NSGA-II |
+|---|---|---|---|---|
+| Manuel (semaine 1) | 0,698 | 0,828 | 0,96 | 0,551 |
+| Aléatoire | 0,696 | 0,826 | 0,94 | 0,544 |
+| B2, $\bar V$ | 0,609 | 0,620 | **0** | 0,466 |
+| Oracle, $\bar V$ | 0,615 | 0,621 | **0** | 0,405 |
+
+L'oracle échoue autant que B2, qui retrouve 98 % de son potentiel (0,139 contre 0,142). Le modèle n'est donc pas en cause : c'est le **critère**.
+- Sur les 174 couples du catalogue manuel, $\bar V$ et la meilleure couverture pondérée d'une configuration ont une corrélation de rang de **0,09 pour les radars et de 0,01 pour les caméras**.
+- La meilleure position de la semaine 3 (C020) est 119ᵉ sur 174 selon $\bar V$.
+- Espacer davantage les mâts (18 m au lieu de 10) n'y change rien (F à B = 13 : 0,616).
+
+Voir beaucoup de sol ne prédit pas le fait de voir les zones qui comptent.
+
+**2. Score pondéré : l'échec est réparé, mais pas d'avantage.** On pondère chaque bin par la masse de poids qu'il contient, $M_b(o) = \sum_{j \in b} w_j$, calculée analytiquement :
+- radar : $R_h = \sum_b M_b V_{h,b}$ ;
+- caméra : $C_h = \max_s \sum_a M_{a,s} V_{h,a,s}$ ;
+- score = $\max_h \max(R_h / \max R, \; C_h / \max C)$.
+
+On suppose la visibilité et le poids indépendants à l'intérieur d'un bin. Les corrélations avec la couverture pondérée passent à **0,69 (radars) et 0,82 (caméras)**.
+
+| Catalogue (61 positions) | F moyen | F, B = 13 | $p^\star_\mathcal{F}$, B = 13 | Hypervolume |
+|---|---|---|---|---|
+| B2, score pondéré | 0,702 | 0,819 | 0,91 | 0,534 |
+| Oracle, score pondéré | 0,700 | 0,834 | 0,93 | 0,550 |
+
+B2 égale l'oracle, mais aucun catalogue ne se distingue du manuel ni du tirage aléatoire. Sur 1,5 ha, 61 positions saturent le site : le plafond de couverture dépasse 0,97 pour tous les catalogues.
+
+**3. Catalogues réduits : la sélection une par une crée de la redondance.** Avec $K$ = 5, 10 et 20 positions (espacement de 10 m, 5 graines pour les témoins), le score pondéré ne bat pas le hasard. À $K$ = 20, il fait même moins bien : F moyen de 0,632 contre 0,675 en moyenne pour le hasard, et $p^\star_\mathcal{F}$ = 0 partout.
+- Un test **choisi après coup** (espacement de 25 m / 15 m à $K$ = 20) semblait donner à B2 le niveau du catalogue manuel complet : F moyen de 0,695, F = 0,832 et $p^\star_\mathcal{F}$ = 0,93 à B = 13.
+
+**4. Protocole préenregistré : échec (0 taille sur 4).** Tout a été fixé avant l'exécution :
+- espacement $R = \tfrac12 \sqrt{A_\text{type}/K_\text{type}}$ ;
+- bande extérieure ajoutée au score avec une masse égale à celle de l'intérieur ;
+- $K$ = 5, 10, 15 et 20 ;
+- succès si le F moyen de B2 (pondéré + bande) **dépasse le maximum de 5 tirages aléatoires** pour au moins 3 tailles sur 4.
+
+| K | B2 pondéré + bande | Oracle pondéré + bande | B2 pondéré | Aléatoire, moyenne / max | Sous-catalogue manuel |
+|---|---|---|---|---|---|
+| 5 | 0,443 | 0,460 | 0,540 | 0,575 / 0,603 | 0,561 |
+| 10 | 0,550 | 0,461 | 0,618 | 0,610 / 0,669 | 0,601 |
+| 15 | 0,583 | 0,617 | 0,636 | 0,663 / 0,685 | 0,619 |
+| 20 | 0,584 | 0,619 | 0,633 | 0,677 / 0,687 | 0,662 |
+
+Le résultat encourageant du point 3 était donc un **faux positif** : un réglage fait sur le site même qui sert à juger. Une exécution de contrôle, où B2 avait été entraîné avec une autre version de scikit-learn, avait même donné 1 taille sur 4 au lieu de 0 : ce seul changement renversait la conclusion à $K$ = 20. Ajouter la bande dégrade la sélection, et $p^\star$ reste nul.
+
+**Diagnostic.** La précision du modèle de substitution n'est pas en cause : sur le score, B2 et le calcul exact ont une corrélation de rang de 0,90 à 0,92. **C'est la méthode de sélection qui échoue.** La couverture est sous-modulaire : la valeur d'une position dépend de celles déjà retenues. Prendre les $K$ meilleures positions une par une ignore leur complémentarité. Une carte de potentiel **par position**, résumée en sommes par bin, ne peut pas porter l'information « quelles cellules cette position voit-elle ? », qui est nécessaire au glouton sur les gains marginaux (§5). Sur un site de cette taille, cette information s'obtient exactement, par la matrice `A`, en quelques minutes.
+
+### 8.10 Tests complémentaires
+
+**`tests/test_surrogate_model.py`**
+
+| Test | Solution de référence |
+|---|---|
+| Champ récepteur | ≥ $2R + 1$ px, et strictement plus petit que la tuile (localité) |
+| Équivariance par translation | décaler l'entrée d'un multiple de 16 px décale la sortie à 10⁻⁵ près |
+| Augmentation D4 | égale **exactement** aux étiquettes calculées par le noyau exact sur le terrain transformé (8 éléments du groupe) |
+| Tuiles | aucune étiquette dans la marge où le champ récepteur est incomplet |
+
+**`tests/test_horizons.py`**
+
+| Test | Solution de référence |
+|---|---|
+| Blocs de 1 px | la pyramide égale les horizons exacts de B1, à chaque hauteur, ainsi que la part de sol |
+| Pavage | aucun recouvrement dans une bande ; ≥ 90 % du disque couvert exactement une fois ; bande 0–10 m exacte |
+| Équivariance D4 des horizons | rotation de 90° du terrain = secteurs décalés de $+2$ |
+| `transformer` | identique à `surrogate.d4` sur les étiquettes |
 
 ## Références
 

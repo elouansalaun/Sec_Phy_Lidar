@@ -144,3 +144,38 @@ surrogate:                       # modèle de substitution : carte de potentiel 
     n_observateurs: 30000        # entraînement + validation
     proportions: {toit: 0.25, sol_degage: 0.40, sol_vegetation: 0.35}
   test_pas_px: 2                 # bloc test calculé exactement un pixel sur deux
+  horizons:                      # horizons denses par pyramide log-polaire (src/horizons.py, 6.1)
+    bandes_m: [0, 10, 25, 50, 100, 150]   # mêmes bandes que B1
+    pas_px: [1, 3, 5, 9, 15]     # côté des blocs (impair) par bande : ≈ constant en nombre de blocs
+  reseau:                        # src/surrogate.py (étape 5.3)
+    base: 16                     # canaux du premier niveau
+    niveaux: 4                   # 1, 2, 4, 8, 16 m
+    dilatations: [2]             # goulot : champ récepteur = 301 px = 2R + 1 (vérifié par un test)
+    tuile_px: 512                # intérieur étiqueté = 512 − 2 × 151 = 210 px
+    lot: 4
+    iterations: 3000
+    lr: 2.0e-3                   # OneCycle
+    eval_tous: 250               # EAM de validation sur la grille complète
+  reseau_physique:               # src/surrogate_physique.py (étape 6.1) : horizons en entrée
+    base: 32
+    niveaux: 3                   # champ récepteur 85 px : le contexte lointain est dans les horizons
+    dilatations: []
+    tuile_px: 256                # intérieur étiqueté = 256 − 2 × 43 = 170 px
+    lot: 8
+    iterations: 3000
+    lr: 2.0e-3
+    eval_tous: 250
+  decision:                      # validation par la décision (src/catalogue_surrogate.py, 6.3)
+    nms_m: 10                    # espacement minimal entre positions retenues (par type)
+    graine_aleatoire: 42         # catalogue témoin tiré au hasard
+    population: 100              # NSGA-II amorcé par les solutions gloutonnes du catalogue
+    generations: 100
+    graines: [1]
+    reduit:                      # catalogues réduits (src/catalogue_reduit.py, 6.3c)
+      tailles: [5, 10, 20]       # nombre de positions, même proportion mâts / toits que le manuel
+      graines: [1, 2, 3, 4, 5]   # tirages aléatoires et sous-catalogues manuels
+      # --- 6.3d : protocole préenregistré (fixé AVANT exécution, ne pas modifier après coup)
+      protocole: "preenregistre" # "initial" (6.3c) ou "preenregistre" (6.3d)
+      tailles_preenregistre: [5, 10, 15, 20]
+      facteur_espacement: 0.5    # R = 0,5 · √(A_type / K_type)
+      masse_bande: 1.0           # masse de la bande extérieure = masse intérieure

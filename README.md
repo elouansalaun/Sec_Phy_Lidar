@@ -20,9 +20,10 @@ Le problème est traité comme un **problème de couverture maximale (MCLP)** so
 6. [Semaine 2 — Visibilité, capteurs, matrice de couverture](#semaine-2--visibilité-capteurs-matrice-de-couverture)
 7. [Semaine 3 — Optimisation : glouton et optimum certifié](#semaine-3--optimisation--glouton-et-optimum-certifié)
 8. [Semaine 4 — L'intrus : pire chemin et optimisation multi-objectif](#semaine-4--lintrus--pire-chemin-et-optimisation-multi-objectif)
-9. [Choix méthodologiques](#choix-méthodologiques)
-10. [Limites connues](#limites-connues)
-11. [Prochaines étapes](#prochaines-étapes)
+9. [Semaines 5–6 — Modèle de substitution : carte de potentiel d'implantation](#semaines-56--modèle-de-substitution--carte-de-potentiel-dimplantation)
+10. [Choix méthodologiques](#choix-méthodologiques)
+11. [Limites connues](#limites-connues)
+12. [Prochaines étapes](#prochaines-étapes)
 
 ---
 
@@ -53,7 +54,7 @@ coûts de support partagés), optimum certifié par décomposition en coupes sou
 | 2 | Moteur de visibilité exact, validation (tests analytiques, GDAL, arbitre exact), modèles caméra/radar, matrice de couverture | ✅ |
 | 3 | Formulation, glouton, optimum certifié (coupes sous-modulaires), front couverture/budget, cartes | ✅ |
 | 4 | Intrus : domaine étendu, pire chemin (p\* et exposition), solutions S3 face à l'intrus, NSGA-II coût/couverture/pire cas | ✅ |
-| 5–6 | Modèle de substitution (U-Net) : dataset, entraînement, accélération/précision | |
+| 5–6 | Modèle de substitution : carte de potentiel (total viewshed), références B0–B2, U-Net brut et physique, pyramide log-polaire, validation par la décision (protocole préenregistré) | ✅ |
 | 7 | Boucle adversariale optimiseur ↔ intrus, analyse de sensibilité | |
 | 8 | Démo Streamlit, article | |
 
@@ -82,8 +83,9 @@ classe 1 avec les poteaux, fils, véhicules et équipements de toiture. Elle doi
 ```bash
 conda create -n lidar-project -c conda-forge python=3.11 \
     pdal python-pdal gdal laspy lazrs-python rasterio "geopandas>=1.0" "shapely>=2" \
-    pyproj pyogrio pyyaml matplotlib numba "scipy>=1.9" pandas pytest pymoo
+    pyproj pyogrio pyyaml matplotlib numba "scipy>=1.9" pandas pytest pymoo scikit-learn joblib
 conda activate lidar-project
+pip install torch                   # semaines 5–6 (MPS sur Apple Silicon)
 ```
 
 Les tuiles LAZ sont à placer dans `data/raw/` (non versionnées, ≈ 1,3 Go), et la tuile MNT du MRNF dans
@@ -111,6 +113,13 @@ python -m src.intrus                # 14. pire chemin des solutions MILP (B = 4,
 python -m src.evaluation_intrus     # 15. les 58 solutions de la semaine 3 face à l'intrus
 python -m src.nsga                  # 16. NSGA-II, 5 graines (≈ 10 min)
 python -m src.analyse_nsga          # 17. validation contre la borne certifiée, prix de la robustesse
+python -m src.dataset_surrogate     # 18. jeu de données exact du modèle de substitution (≈ 7 min)
+python -m src.horizons              # 19. pyramide log-polaire : coût et erreur contre l'horizon exact
+python -m src.baselines_surrogate   # 20. références B0, B1, B2 ; écrit b2.joblib (≈ 3 min)
+python -m src.surrogate entrainer   # 21. U-Net brut (MPS, ≈ 20 min), puis `evaluer`
+python -m src.surrogate_physique entrainer   # 22. U-Net physique (≈ 23 min), puis `evaluer`
+python -m src.catalogue_surrogate   # 23. validation par la décision, 6 catalogues (≈ 8 min)
+python -m src.catalogue_reduit      # 24. catalogues réduits, protocole préenregistré (≈ 2 min)
 ```
 
 ```
@@ -133,16 +142,27 @@ python -m src.analyse_nsga          # 17. validation contre la borne certifiée,
 │   ├── intrus.py               pire chemin : p* (union-find) et exposition (Dijkstra)
 │   ├── evaluation_intrus.py    solutions de la semaine 3 face à l'intrus
 │   ├── nsga.py                 NSGA-II coût / couverture / pire cas
-│   └── analyse_nsga.py         validation du front, prix de la robustesse
+│   ├── analyse_nsga.py         validation du front, prix de la robustesse
+│   ├── dataset_surrogate.py    cible V (anneaux × secteurs × hauteurs), découpage spatial, étiquettes exactes
+│   ├── eval_surrogate.py       métriques communes : EAM, Spearman, rappel et regret top-K
+│   ├── baselines_surrogate.py  références B0, B1 (horizons exacts), B2 (pyramide) + boosting
+│   ├── surrogate.py            U-Net brut, augmentation D4, supervision creuse
+│   ├── horizons.py             horizons denses par pyramide log-polaire
+│   ├── surrogate_physique.py   U-Net conditionnel en h, horizons en entrée
+│   ├── catalogue_surrogate.py  validation par la décision : catalogues, score géométrique ou pondéré
+│   └── catalogue_reduit.py     catalogues réduits, protocole préenregistré
 ├── tests/
 │   ├── test_viewshed.py        solutions analytiques du moteur de visibilité
 │   ├── test_sensors.py         propriétés des modèles de capteurs, contrôle de configuration
 │   ├── test_greedy.py          glouton contre force brute, cas construits
 │   ├── test_milp.py            optimum exact sur instances jouets, validité des coupes
 │   ├── test_intrusion.py       graphe : 8-connexité, diagonales, franchissements, portails
-│   └── test_intrus.py          p*, exposition, invariance à la résolution, profils
+│   ├── test_intrus.py          p*, exposition, invariance à la résolution, profils
+│   ├── test_surrogate_data.py  noyau contre moteur exact, symétries D4, monotonie, découpage
+│   ├── test_surrogate_model.py champ récepteur, équivariance, augmentation exacte
+│   └── test_horizons.py        pyramide : blocs unitaires = exact, pavage, équivariance
 ├── docs/
-│   └── formulation.md          formulation mathématique et preuves (semaines 3 et 4)
+│   └── formulation.md          formulation mathématique et preuves (semaines 3 à 6)
 ├── figures/                    figures versionnées reprises dans ce README
 └── data/
     ├── raw/                    tuiles LAZ (non versionnées)
@@ -920,6 +940,100 @@ encadrée par la borne certifiée sur (coût, F).
 
 ---
 
+## Semaines 5–6 — Modèle de substitution : carte de potentiel d'implantation
+
+Le plan prévoyait un U-Net pour accélérer le calcul des viewsheds. Ces deux semaines montrent pourquoi ce plan ne tenait pas, ce qu'on a construit à la place, et ce que vaut ce modèle quand on lui demande de guider une décision. La formulation complète est dans la §8 de [`docs/formulation.md`](docs/formulation.md).
+
+### 1. Diagnostic : il n'y avait pas de goulot
+
+| Mesure (2 cœurs CPU) | Valeur |
+|---|---|
+| Calculs de τ nécessaires au catalogue | **176** : τ ne dépend ni du capteur ni de l'orientation (choix n° 16) |
+| τ sur le disque de 400 m / sur les seules cellules utiles | 220 ms / 6,4 ms, résultat identique |
+| U-Net (1,9 M paramètres), une carte 816 × 816 | 582 ms, **2,6 fois plus lent** que le moteur exact |
+
+Les « milliers de viewsheds » de la description du projet n'existent pas, et un surrogate par observateur serait plus lent et moins précis que ce qu'il remplace. Le coût exact ne devient prohibitif que si l'on veut la visibilité depuis **toutes** les positions d'une zone. C'est le *total viewshed*, en O(N·R²) : environ 1 h sur la zone actuelle, contre une seule passe en O(N) pour un réseau entièrement convolutif.
+
+### 2. Cible et données (`src/dataset_surrogate.py`)
+
+Pour chaque position o, chaque hauteur h (2 à 10 m au-dessus de la surface opaque), chaque anneau (0–50 et 50–150 m) et chaque secteur de 45°, V est la part de la surface du bin qui est du sol visible, pondérée par la transmittance e^(−τ). Cela fait 80 sorties par position, calculées par le noyau exact de la semaine 2.
+- **Données** : 30 000 observateurs stratifiés (toits, sol dégagé, sol sous végétation) pour l'entraînement et la validation, plus 18 056 observateurs de test. Coût : 8,8 ms par position sur le Mac, soit environ 7 min.
+- **Découpage spatial** : le bloc test contient le site, un tampon de 30 m l'entoure, et la validation est faite de tuiles de 100 m tirées au hasard. Deux positions voisines ont des étiquettes presque identiques : un tirage aléatoire des cellules mesurerait une interpolation, pas une généralisation.
+- **Trois propriétés vérifiées par des tests** :
+  - l'augmentation par rotations et miroirs (groupe D4) est **exacte**, les secteurs étant permutés avec le terrain ;
+  - V est monotone en h **seulement sans végétation**. Un rayon qui traverse une colonne de canopée y parcourt √(1 + pente²) m par mètre horizontal. Sur les données, la monotonie est violée dans 9,6 % des cas ;
+  - l'orientation compte : le meilleur secteur voit en médiane 3,45 fois plus que la moyenne.
+
+![Découpage spatial](figures/decoupage.png)
+
+### 3. Trois familles de modèles
+
+| Modèle (bloc test, h = 6 m) | EAM | Spearman | Regret top-20 | Coût par position |
+|---|---|---|---|---|
+| Calcul exact | 0 | 1 | 0 | 8 800 µs |
+| B0 : moyenne par strate | 0,144 | 0,46 | 66 % | ≈ 0 |
+| B1 : angles d'horizon exacts par secteur + boosting | 0,044 | 0,926 | 9,7 % | 221 µs |
+| **B2 : horizons par pyramide log-polaire + boosting** | **0,042** | **0,936** | **6,1 %** | **116 µs** |
+| U-Net brut (`src/surrogate.py`) | 0,072 | 0,796 | 11 % | 0,2 µs |
+| U-Net physique (`src/surrogate_physique.py`) | 0,053 | 0,878 | 15 % | 27 µs |
+
+![Erreur contre coût](figures/surrogate_cout_erreur.png)
+
+- **Le U-Net brut sous-apprend.** Il est moins bon que B1 même en validation (0,051 contre 0,029), avec le même décalage test/validation. Un CNN reconstruit mal un maximum le long de rayons divisé par la distance : c'est un biais inductif manquant, pas un réglage à revoir.
+- **Pyramide log-polaire (`src/horizons.py`).** Des blocs de 1 à 15 px, lus tous les p pixels et préfiltrés une fois pour la grille, donnent des horizons à **38 fois moins cher** que le calcul exact (1 204 lectures au lieu de 70 680), avec environ 1° d'erreur et une bande proche exacte.
+- **B2 montre que l'approximation ne coûte rien.** Il égale B1, parce que la variable qui manquait n'était pas géométrique : c'était **la part de sol par bin**, qui borne V. Horizons à h = 0 : 0,061 ; à chaque hauteur : 0,058 ; avec la part de sol : 0,042.
+- **Le U-Net physique**, qui reçoit ces horizons en entrée, réduit l'erreur du U-Net brut de 26 %, mais reste derrière B2. Suivant la règle fixée avant l'expérience, **B2 est retenu**. À l'échelle du site, les temps de calcul sont tous négligeables devant l'heure du calcul exact : c'est donc la précision qui décide.
+
+### 4. Validation par la décision (`src/catalogue_surrogate.py`)
+
+La vraie question est la suivante : un catalogue de positions candidates choisi par B2 donne-t-il de meilleurs dispositifs que celui de la semaine 1 ? Chaque catalogue est évalué exactement, avec les mêmes effectifs et le même protocole : glouton sur 29 budgets, p\*, NSGA-II. Deux témoins l'encadrent : un **oracle** (même critère, valeurs exactes) et un **tirage aléatoire**.
+
+| Catalogue (61 positions) | F moyen (glouton) | F, B = 13 | p\*_F, B = 13 | Hypervolume |
+|---|---|---|---|---|
+| Manuel (semaine 1) | 0,698 | 0,828 | 0,96 | 0,551 |
+| Aléatoire | 0,696 | 0,826 | 0,94 | 0,544 |
+| B2, potentiel géométrique V̄ | 0,609 | 0,620 | **0** | 0,466 |
+| Oracle, potentiel géométrique V̄ | 0,615 | 0,621 | **0** | 0,405 |
+| B2, score pondéré | 0,702 | 0,819 | 0,91 | 0,534 |
+| Oracle, score pondéré | 0,700 | 0,834 | 0,93 | 0,550 |
+
+![Catalogues](figures/decision_carte.png)
+
+1. **Le potentiel géométrique entasse les mâts dans le coin dégagé du site.** L'oracle échoue autant que B2 : le problème vient du **critère**, pas du modèle. V̄ et la couverture pondérée d'une position ont une corrélation de rang de 0,09 pour les radars et de 0,01 pour les caméras. La meilleure position de la semaine 3 n'arrive qu'au 119ᵉ rang sur 174.
+2. **Pondérer chaque bin par la masse de poids qu'il contient** fait passer ces corrélations à 0,69 et 0,82, sans rien réentraîner. B2 égale alors l'oracle, mais **aucun catalogue ne bat le manuel ni le tirage aléatoire**. Avec 61 positions, un site de 1,5 ha est saturé.
+
+![Couverture et détection garantie selon le budget](figures/decision_budget.png)
+
+### 5. Catalogues réduits et protocole préenregistré (`src/catalogue_reduit.py`)
+
+Si la sélection ne sert à rien quand les positions abondent, elle devrait servir quand elles sont rares. Avec K = 5 à 20 positions, **ce n'est pas le cas**. Un premier test semblait prometteur : avec un espacement de 25 m / 15 m, 20 positions choisies par B2 retrouvaient le niveau des 61 du catalogue manuel. Mais cet espacement avait été choisi **après** avoir vu les résultats.
+
+Le test définitif a donc été **préenregistré** : espacement fixé par une règle géométrique, bande extérieure ajoutée au score, succès si B2 bat **le meilleur de 5 tirages aléatoires** pour au moins 3 tailles sur 4.
+
+| K | B2 pondéré + bande | B2 pondéré | Aléatoire, moyenne / max | Sous-catalogue manuel |
+|---|---|---|---|---|
+| 5 | 0,443 | 0,540 | 0,575 / 0,603 | 0,561 |
+| 10 | 0,550 | 0,618 | 0,610 / 0,669 | 0,601 |
+| 15 | 0,583 | 0,636 | 0,663 / 0,685 | 0,619 |
+| 20 | 0,584 | 0,633 | 0,677 / 0,687 | 0,662 |
+
+**Résultat : 0 taille sur 4. Échec.** Le résultat prometteur était un faux positif, dû à un réglage fait sur le jeu de test. Une exécution de contrôle, où B2 avait été entraîné avec une autre version de scikit-learn, donnait 1 sur 4 : ce seul changement suffisait à renverser la conclusion à K = 20.
+
+![Catalogues réduits, protocole préenregistré](figures/decision_reduit_preenregistre.png)
+
+**Pourquoi.** La couverture est sous-modulaire : la valeur d'une position dépend de celles déjà choisies. Prendre les K meilleures positions une par une accumule des positions qui regardent toutes les mêmes zones. Une carte de potentiel **par position** ne peut pas porter l'information nécessaire (« quelles cellules voit-elle ? »), et sur ce site, cette information s'obtient exactement en quelques minutes.
+
+### 6. Ce qu'il faut retenir des semaines 5–6
+
+1. **Mesurer le goulot avant de le traiter.** Il n'existait pas ; l'architecture de la semaine 2 l'avait déjà supprimé.
+2. **Le deep learning généraliste perd contre un modèle physique simple**, et ne s'en approche qu'en recevant la physique en entrée. La contribution durable de ces deux semaines est **la pyramide log-polaire** : 38 fois moins chère que l'horizon exact, sans perte mesurable.
+3. **Un modèle précis ne garantit pas une bonne décision.** La cible géométrique était bien apprise (B2 = oracle), mais elle ne mesurait pas l'objectif.
+4. **Choisir un ensemble n'est pas classer des éléments** : c'est un problème sous-modulaire, et un score par position ne peut pas en tenir compte.
+5. **Préenregistrer le protocole** a transformé un « succès » apparent en échec documenté. Sans lui, ce README annoncerait un résultat faux.
+6. **Des témoins simples et bien choisis** (l'oracle, le tirage aléatoire espacé) ont désigné la vraie cause à chaque étape.
+
+---
+
 ## Choix méthodologiques
 
 **Organisation**
@@ -1019,6 +1133,24 @@ encadrée par la borne certifiée sur (coût, F).
 42. **k-couverture en indicateur plutôt qu'en contrainte**, après avoir mesuré qu'elle n'est réalisable
     qu'à partir de 25,6 unités.
 
+**Modèle de substitution (semaines 5–6)**
+43. **Mesurer le goulot avant de construire le modèle** : le diagnostic a remplacé la cible prévue (viewshed
+    par observateur) par celle où le réseau a un avantage de structure (total viewshed).
+44. **Cible agrégée par bins, exacte par construction** : même noyau que le moteur de visibilité, vérifié
+    par un test d'égalité.
+45. **Découpage spatial avec tampon**, le site dans le test ; la fuite résiduelle par les entrées est assumée
+    et documentée.
+46. **Références avant le réseau** (B0, B1) et règle de choix fixée avant l'expérience : c'est B2, et non le
+    réseau, qui a été retenu.
+47. **Symétries exploitées et testées** : augmentation D4 exacte, équivariance par translation, normalisation
+    locale (BatchNorm) après la détection d'un défaut de GroupNorm par le test du champ récepteur.
+48. **Donner la physique au modèle plutôt que l'agrandir** : horizons denses par pyramide log-polaire, coût et
+    erreur mesurés contre l'horizon exact.
+49. **Valider par la décision, avec un oracle et un témoin aléatoire** : sépare l'erreur du modèle de celle
+    du critère.
+50. **Protocole préenregistré** (règle d'espacement, critère de succès) après un premier résultat obtenu par
+    réglage a posteriori ; son échec est publié tel quel.
+
 ## Limites connues
 
 - Végétation non séparée des autres objets de classe 1 (poteaux, véhicules, clôtures).
@@ -1056,22 +1188,39 @@ encadrée par la borne certifiée sur (coût, F).
 - **Pondération par m²** : Bat.3 porte 67 % de l'objectif et oriente toutes les solutions.
 - **Certification incomplète au-delà de B = 18** : l'écart reste entre 1 et 2,8 % dans la limite de 15 min
   par budget.
+- **Modèle de substitution évalué sur une seule zone** d'environ 1 km², sans feuilles ; les disques de test
+  chevauchent du terrain vu à l'entraînement.
+- **Cible géométrique à α = 1** (caméra) : elle note moins bien les radars (corrélation de 0,69 contre 0,82
+  avec la couverture pondérée).
+- **Score pondéré** : il suppose la visibilité et le poids indépendants à l'intérieur d'un bin (45° × 50 ou
+  100 m).
+- **Sélection des K meilleures positions une par une** : elle ignore la redondance entre positions. C'est une
+  limite de méthode, pas de modèle (§8.9).
+- **Statistique limitée en 6.3** : une graine de NSGA-II, 5 tirages aléatoires ; catalogues réduits évalués
+  au glouton seulement.
+- **U-Net physique non convergé** à 3 000 itérations (la validation baisse encore).
+- **Modèles scikit-learn picklés** (`b2.joblib`) : ils ne se rechargent qu'avec la version qui les a écrits ;
+  à régénérer par `python -m src.baselines_surrogate`.
 
 ## Prochaines étapes
 
-**Semaines 5–6 — Modèle de substitution**
-- **U-Net** prédisant la carte d'épaisseur optique τ à partir d'un patch local (MNS, bâti, végétation,
-  hauteur de l'observateur) ; dataset tiré des 176 couples exacts et de positions supplémentaires.
-- **Étude accélération / précision** : IoU et erreur sur P contre le moteur exact, puis effet sur les
-  décisions (p\*, front NSGA-II).
-
-**Questions ouvertes**
+**Semaine 7 — Boucle adversariale et sensibilité**
+- **Détection opportune (EASI)**, et boucle adversariale exacte par interdiction de plus court chemin
+  (Israeli et Wood, 2002), l'exposition étant linéaire en x.
 - **Sensibilité** : largeur de la bande extérieure, τ_obs, pondération par actif plutôt que par m²,
-  indépendance des détections (max P contre 1 − Π(1 − P)).
-- **NSGA-II plus long** (500 générations) ou sans amorçage, pour mesurer ce que l'heuristique trouve seule.
+  indépendance des détections (max P contre 1 − Π(1 − P)), saison feuillée.
+
+**Perspectives issues des semaines 5–6**
+- **Mettre le modèle de substitution dans la boucle d'un optimiseur d'ensemble** : sélection gloutonne sur
+  les gains marginaux, avec un modèle qui prédit *quelles* cellules une position voit (et pas seulement des
+  sommes par bin).
+- **Un second site de plusieurs km²**, où le point d'équilibre du réseau est atteint et où les positions
+  candidates deviennent rares.
+- **Généralisation** d'un site à l'autre, et à la saison feuillée.
+
+**Questions ouvertes (semaine 4)**
+- **NSGA-II plus long** (500 générations) ou sans amorçage.
 - **Option `objectif_nsga: "melange"`** du bloc `intrus` : prévue dans la formulation, pas encore branchée.
-- **Semaine 7** : détection opportune (EASI), et boucle adversariale exacte par interdiction de plus court
-  chemin (Israeli et Wood, 2002), l'exposition étant linéaire en x.
 
 ---
 
