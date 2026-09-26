@@ -1,0 +1,1510 @@
+# Journal de bord — Surveillance optimale d'un site à partir de données LiDAR aériennes
+
+> Ce document est le détail complet du projet, semaine par semaine : choix, mesures, échecs et
+> corrections. La page d'accueil est le [README](../README.md) ; les preuves sont dans
+> [`formulation.md`](formulation.md) et la synthèse dans [`article.md`](article.md).
+
+Placement optimal de capteurs de surveillance (caméras, radars) sur un site à protéger, en exploitant la
+géométrie 3D d'un nuage de points LiDAR classé : bâtiments opaques, végétation semi-transparente, relief.
+Le problème est traité comme un **problème de couverture maximale (MCLP)** sous contrainte de budget, puis
+évalué contre un **intrus** qui cherche le chemin le moins détecté.
+
+> **Site fictif.** Le site protégé, ses zones et ses actifs sont inventés et superposés à un secteur urbain
+> quelconque de Montréal. Aucune information sur un site réel n'est produite ni publiée. Ce choix est
+> délibéré : publier des cartes d'angles morts d'un site réel sensible serait inacceptable.
+
+---
+
+## Sommaire
+1. [Problème](#problème)
+2. [Avancement](#avancement)
+3. [Données](#données)
+4. [Installation et reproduction](#installation-et-reproduction)
+5. [Semaine 1 — Site, rasters, validation, positions candidates](#semaine-1--site-rasters-validation-positions-candidates)
+6. [Semaine 2 — Visibilité, capteurs, matrice de couverture](#semaine-2--visibilité-capteurs-matrice-de-couverture)
+7. [Semaine 3 — Optimisation : glouton et optimum certifié](#semaine-3--optimisation--glouton-et-optimum-certifié)
+8. [Semaine 4 — L'intrus : pire chemin et optimisation multi-objectif](#semaine-4--lintrus--pire-chemin-et-optimisation-multi-objectif)
+9. [Semaines 5–6 — Modèle de substitution : carte de potentiel d'implantation](#semaines-56--modèle-de-substitution--carte-de-potentiel-dimplantation)
+10. [Semaine 7 — Détection opportune, boucle adversariale exacte, sensibilité](#semaine-7--détection-opportune-boucle-adversariale-exacte-sensibilité)
+11. [Semaine 8 — Démo interactive et article](#semaine-8--démo-interactive-et-article)
+12. [Choix méthodologiques](#choix-méthodologiques)
+13. [Limites connues](#limites-connues)
+14. [Prochaines étapes](#prochaines-étapes)
+
+---
+
+## Problème
+
+Un nombre limité de capteurs doit protéger un site comportant des zones plus ou moins critiques. Chaque
+capteur a une position candidate (mât, toit), une hauteur et un modèle de détection (portée, champ de vision,
+orientation pour une caméra ; couverture 360° et masque d'élévation pour un radar).
+
+Trois éléments distinguent l'approche d'un simple calcul de couverture :
+
+1. **La 3D du LiDAR** : les bâtiments bloquent la vue, la végétation l'atténue en fonction de la densité de
+   points traversée. On obtient une *probabilité* de détection plutôt qu'un visible/invisible binaire.
+2. **L'évaluation par un intrus** : la métrique clé est la probabilité de détection sur le chemin le moins
+   surveillé (Dijkstra sur une carte de coût), de l'extérieur jusqu'à la zone critique.
+3. **Un modèle de substitution (deep learning)** pour accélérer le calcul des champs de visibilité, qui est
+   le goulot d'étranglement de l'optimisation.
+
+Méthodes d'optimisation comparées : glouton au ratio gain/coût (heuristique rapide, sans garantie avec des
+coûts de support partagés), optimum certifié par décomposition en coupes sous-modulaires (encadrement
+[borne inférieure, borne supérieure] de l'optimum), et NSGA-II (front de Pareto multi-objectif).
+
+## Avancement
+
+| Semaine | Contenu | État |
+|---|---|---|
+| 1 | Site, rasters MNT/MNS/hauteurs, validation, positions candidates | ✅ |
+| 2 | Moteur de visibilité exact, validation (tests analytiques, GDAL, arbitre exact), modèles caméra/radar, matrice de couverture | ✅ |
+| 3 | Formulation, glouton, optimum certifié (coupes sous-modulaires), front couverture/budget, cartes | ✅ |
+| 4 | Intrus : domaine étendu, pire chemin (p\* et exposition), solutions S3 face à l'intrus, NSGA-II coût/couverture/pire cas | ✅ |
+| 5–6 | Modèle de substitution : carte de potentiel (total viewshed), références B0–B2, U-Net brut et physique, pyramide log-polaire, validation par la décision (protocole préenregistré) | ✅ |
+| 7 | Détection opportune (EASI), boucle adversariale exacte par génération de chemins, coût minimal robuste certifié, prix de la robustesse, sensibilité par regret de décision (protocole préenregistré) | ✅ |
+| 8 | Démo Streamlit (solutions certifiées, placement manuel avec intrus en direct), article | ✅ |
+
+## Données
+
+| Élément | Valeur |
+|---|---|
+| Source | Données lidar du Québec, ministère des Ressources naturelles et des Forêts (MRNF) |
+| Projet | 2023, 4 tuiles de 1 km² : `23_2955039F08_DC`, `23_2955040F08_DC`, `23_2965039F08_DC`, `23_2965040F08_DC` |
+| Format | LAZ 1.4, point format 7 (intensité, temps GPS, RGB) |
+| Projection | NAD83(CSRS) / MTM zone 8 — **EPSG:2950** |
+| Référence verticale | **CGVD28** (absente de l'en-tête LAS ; source : index du MRNF) |
+| Acquisition | **21 novembre 2023** (saison : automne) → feuillus **sans feuilles** |
+| Capteur | RIEGL VQ |
+| Densité | ≈ 24 impulsions/m², ≈ 30 points/m² |
+| Classes présentes | 1 non classé, 2 sol, 6 bâtiment, 7 bruit, 17 tablier de pont |
+| Référence de validation | MNT 1 m du MRNF (Lambert du Québec, EPSG:6622) |
+| Licence | © Gouvernement du Québec, MRNF — CC BY 4.0 |
+
+**Point important : il n'y a pas de classes de végétation (3, 4, 5).** La végétation est mélangée dans la
+classe 1 avec les poteaux, fils, véhicules et équipements de toiture. Elle doit être identifiée dans le projet
+(voir [Choix méthodologiques](#choix-méthodologiques)).
+
+## Installation et reproduction
+
+```bash
+conda create -n lidar-project -c conda-forge python=3.11 \
+    pdal python-pdal gdal laspy lazrs-python rasterio "geopandas>=1.0" "shapely>=2" \
+    pyproj pyogrio pyyaml matplotlib numba "scipy>=1.9" pandas pytest pymoo scikit-learn joblib
+conda activate lidar-project
+pip install torch                   # semaines 5–6 (MPS sur Apple Silicon)
+conda install -c conda-forge streamlit plotly   # semaine 8 : démo, dans le même environnement
+```
+
+Les tuiles LAZ sont à placer dans `data/raw/` (non versionnées, ≈ 1,3 Go), et la tuile MNT du MRNF dans
+`data/external/mnt_mrnf.tif`. Le site est dessiné dans QGIS (`data/site/site.gpkg`, voir
+`QGIS_site_tutorial.txt`). Tous les paramètres sont dans `config.yaml`.
+
+```bash
+python -m src.site                  # 1. validation du site, zones pondérées, grille
+python -m src.rasters               # 2. MNT, MNS, hauteurs, végétation, fraction de trouée
+python -m src.validation pdal       # 3a. génère le pipeline PDAL de référence
+pdal pipeline data/processed/validation/mnt_pdal.json
+python -m src.validation compare    # 3b. compare le MNT à PDAL et au MRNF
+python -m src.candidates            # 4. positions candidates des capteurs
+python -m pytest tests              # 5. tests analytiques (moteur de visibilité, capteurs)
+python -m src.validation_viewshed   # 6. validation externe contre gdal_viewshed
+python -m src.validation_viewshed diag C034 4   #    diagnostic d'un couple (arbitre exact)
+python -m src.sensors C052 4        # 7. démo : surface efficace par capteur pour un candidat
+python -m src.coverage              # 8. matrice de couverture du MCLP
+python -m src.greedy                # 9. glouton, balayage du budget (< 1 s)
+python -m src.milp                  # 10. optimum certifié, balayage du budget (≈ 3 h 30)
+python -m src.pareto                # 11. front couverture/budget, écarts, convergence
+python -m src.analyse               # 12. cartes des solutions, bilan par zone
+python -m src.intrusion             # 13. domaine de l'intrus, graphe, A_intrus (≈ 1 min)
+python -m src.intrus                # 14. pire chemin des solutions MILP (B = 4, 13, 30)
+python -m src.evaluation_intrus     # 15. les 58 solutions de la semaine 3 face à l'intrus
+python -m src.nsga                  # 16. NSGA-II, 5 graines (≈ 10 min)
+python -m src.analyse_nsga          # 17. validation contre la borne certifiée, prix de la robustesse
+python -m src.dataset_surrogate     # 18. jeu de données exact du modèle de substitution (≈ 7 min)
+python -m src.horizons              # 19. pyramide log-polaire : coût et erreur contre l'horizon exact
+python -m src.baselines_surrogate   # 20. références B0, B1, B2 ; écrit b2.joblib (≈ 3 min)
+python -m src.surrogate entrainer   # 21. U-Net brut (MPS, ≈ 20 min), puis `evaluer`
+python -m src.surrogate_physique entrainer   # 22. U-Net physique (≈ 23 min), puis `evaluer`
+python -m src.catalogue_surrogate   # 23. validation par la décision, 6 catalogues (≈ 8 min)
+python -m src.catalogue_reduit      # 24. catalogues réduits, protocole préenregistré (≈ 2 min)
+python -m src.opportune             # 25. détection opportune : temps restant, p̃*(T_R) (≈ 10 s)
+python -m src.boucle                # 26. boucle adversariale : c(θ, T_R) certifié, prix de la robustesse (≈ 4 h sur 2 cœurs)
+python -m src.sensibilite           # 27. sensibilité par regret de décision (≈ 2 h 30 sur 2 cœurs)
+python -m streamlit run app.py      # 28. démo interactive (lit les sorties ci-dessus)
+```
+
+```
+├── app.py                      démo Streamlit (affichage seulement ; logique dans src/demo.py)
+├── config.yaml                 paramètres (entrées choisies, jamais de valeurs calculées)
+├── src/
+│   ├── site.py                 site : validation, actifs, zones d'approche, grille
+│   ├── rasters.py              rasters de base par accumulation par blocs
+│   ├── validation.py           validation du MNT (PDAL, MRNF)
+│   ├── candidates.py           positions candidates (mâts, toits)
+│   ├── viewshed.py             épaisseur optique τ de la ligne de visée (numba)
+│   ├── validation_viewshed.py  comparaison à gdal_viewshed, diagnostic, arbitre exact
+│   ├── sensors.py              modèles caméra (EN 62676-4) et radar (Swerling I)
+│   ├── coverage.py             matrice de couverture creuse (configurations × cellules)
+│   ├── instance.py             instance d'optimisation : évaluation exacte, contraintes
+│   ├── greedy.py               glouton au ratio gain/coût
+│   ├── milp.py                 optimum certifié par coupes sous-modulaires multi-blocs
+│   ├── pareto.py               front couverture/budget, écarts, convergence
+│   ├── analyse.py              cartes des solutions, bilan par zone
+│   ├── intrusion.py            domaine de l'intrus : cellules, graphe, clôture, portails, A_intrus
+│   ├── intrus.py               pire chemin : p* (union-find) et exposition (Dijkstra)
+│   ├── evaluation_intrus.py    solutions de la semaine 3 face à l'intrus
+│   ├── nsga.py                 NSGA-II coût / couverture / pire cas
+│   ├── analyse_nsga.py         validation du front, prix de la robustesse
+│   ├── dataset_surrogate.py    cible V (anneaux × secteurs × hauteurs), découpage spatial, étiquettes exactes
+│   ├── eval_surrogate.py       métriques communes : EAM, Spearman, rappel et regret top-K
+│   ├── baselines_surrogate.py  références B0, B1 (horizons exacts), B2 (pyramide) + boosting
+│   ├── surrogate.py            U-Net brut, augmentation D4, supervision creuse
+│   ├── horizons.py             horizons denses par pyramide log-polaire
+│   ├── surrogate_physique.py   U-Net conditionnel en h, horizons en entrée
+│   ├── catalogue_surrogate.py  validation par la décision : catalogues, score géométrique ou pondéré
+│   ├── catalogue_reduit.py     catalogues réduits, protocole préenregistré
+│   ├── opportune.py            détection opportune (EASI) : temps restant, p̃*, plafond
+│   ├── boucle.py               boucle adversariale exacte : maître ↔ intrus par génération de chemins
+│   ├── sensibilite.py          regret de décision : retard, vitesse, bande, feuillage
+│   └── demo.py                 logique de la démo : chargement, évaluation en direct, carte
+├── tests/
+│   ├── test_viewshed.py        solutions analytiques du moteur de visibilité
+│   ├── test_sensors.py         propriétés des modèles de capteurs, contrôle de configuration
+│   ├── test_greedy.py          glouton contre force brute, cas construits
+│   ├── test_milp.py            optimum exact sur instances jouets, validité des coupes
+│   ├── test_intrusion.py       graphe : 8-connexité, diagonales, franchissements, portails
+│   ├── test_intrus.py          p*, exposition, invariance à la résolution, profils
+│   ├── test_surrogate_data.py  noyau contre moteur exact, symétries D4, monotonie, découpage
+│   ├── test_surrogate_model.py champ récepteur, équivariance, augmentation exacte
+│   ├── test_horizons.py        pyramide : blocs unitaires = exact, pavage, équivariance
+│   ├── test_opportune.py       temps restant exact, T_R = 0, proposition T_R > T_min, encadrement
+│   ├── test_boucle.py          coût minimal contre énumération exhaustive, deux fusions, réservoir
+│   ├── test_sensibilite.py     feuillage ⇔ α × f, retard plafonné par le portail, clés de configuration
+│   └── test_demo.py            démo : optimum certifié retrouvé, page complète exécutée (AppTest)
+├── docs/
+│   ├── formulation.md          formulation mathématique et preuves (semaines 3 à 7)
+│   └── article.md              article de synthèse (semaine 8)
+├── figures/                    figures versionnées reprises dans ce README
+└── data/
+    ├── raw/                    tuiles LAZ (non versionnées)
+    ├── external/               références externes (non versionnées)
+    ├── site/                   site.gpkg (dessiné) + sorties dérivées
+    └── processed/              rasters, visibilités, validation, couverture (régénérables)
+```
+
+---
+
+## Semaine 1 — Site, rasters, validation, positions candidates
+
+### 1. Le site (`src/site.py`)
+
+Le site est dessiné dans QGIS en trois couches : `perimetre` (clôture), `zones` (partition du périmètre avec
+niveau, poids, type et cible de l'intrus) et `acces` (4 portails). Le module :
+
+- **valide** le dessin : projection, géométries valides, zones formant une partition exacte du périmètre
+  (écart mesuré : 10⁻⁸ m²), poids positifs, accès sur la clôture ;
+- **sépare** les *actifs* (bâtiments, équipements), qui sont les cibles de l'intrus, des *surfaces à
+  surveiller* ;
+- **construit** un anneau d'approche de 15 m autour de chaque actif, qui porte son poids ;
+- **calcule** la zone d'étude (buffer de 400 m), la couronne de départ de l'intrus et une grille de 1 m calée
+  sur des coordonnées entières (995 × 944 pixels).
+
+![Site fictif : zone d'étude, surfaces pondérées, actifs et accès](../data/site/site.png)
+
+| Surface à surveiller | Poids w | Surface (m²) | Part de l'objectif |
+|---|---|---|---|
+| Approche Bat.3 (cœur, cible de l'intrus) | 10 | 3 255 | **66,9 %** |
+| Approche Bat.1 | 5 | 1 603 | 16,5 % |
+| Périphérie | 1 | 4 362 | 9,0 % |
+| Approche Bat.4 | 4 | 565 | 4,6 % |
+| Approche Bat.2 | 4 | 223 | 1,8 % |
+| Approche Gaz Bat.3 | 4 | 119 | 1,0 % |
+| Approche Générateur | 4 | 29 | 0,2 % |
+
+### 2. Les rasters (`src/rasters.py`)
+
+Les 4 tuiles (≈ 127 millions de points, dont 27 millions dans la grille) sont lues par blocs de 5 millions de
+points. Pour chaque bloc, chaque point est affecté à son pixel et des statistiques fusionnables (nombre,
+somme, min, max) sont accumulées par classe. La mémoire reste constante quel que soit le volume.
+
+| Produit | Définition |
+|---|---|
+| `mnt.tif` | moyenne des points sol par pixel ; pixels sans sol comblés par interpolation |
+| `mnt_comble.tif` | masque des pixels interpolés (20,8 % de la grille, essentiellement sous les bâtiments) |
+| `mns.tif` | maximum de toutes les classes sauf bruit |
+| `bati_mask.tif`, `bati_h.tif` | présence et hauteur des bâtiments (22,6 % de la grille, jusqu'à 100 m) |
+| `autre_h.tif` | hauteur de la classe 1 au-dessus du sol |
+| `autre_frac_multi.tif` | part des points de classe 1 issus d'impulsions à retours multiples (indicateur de végétation) |
+| `densite.tif` | points/m² (médiane : 25) |
+
+### 3. Validation du MNT (`src/validation.py`)
+
+Deux références indépendantes, deux questions différentes :
+
+| Référence | Question | Sol | n pixels | Biais | RMSE | NMAD | \|écart\| p99 |
+|---|---|---|---|---|---|---|---|
+| **PDAL** `writers.gdal` (binmode, mean), zone test 295 × 244 px | la mise en grille est-elle exacte ? | mesuré | 59 426 | 0,000 m | **0,003 m** | 0,000 m | 0,007 m |
+| **MNT du MRNF** (EPSG:6622, rééchantillonné bilinéaire) | la chaîne complète est-elle plausible ? | mesuré | 744 271 | 0,000 m | 0,093 m | **0,013 m** | 0,244 m |
+| | | interpolé | 195 009 | +0,023 m | 0,507 m | 0,117 m | 2,21 m |
+
+**Lecture.**
+- **PDAL** : l'écart est millimétrique (dû aux points situés exactement sur une limite de pixel). La mise en
+  grille maison (alignement, convention des lignes, moyenne) est **validée**.
+- **MRNF, sol mesuré** : biais nul et NMAD de 1,3 cm. La RMSE de 9 cm est du même ordre que le bruit
+  introduit par le seul rééchantillonnage entre projections (≈ 8 cm RMSE, mesuré par un test aller-retour
+  MTM 8 → Lambert → MTM 8). L'accord est donc au niveau du bruit de la méthode de comparaison.
+- **MRNF, sol interpolé** : écarts plus forts (p99 ≈ 2 m) sous les bâtiments, où chaque producteur interpole
+  différemment. Sans conséquence : la visibilité n'est jamais évaluée sous un bâtiment.
+- **Limite** : le MNT du MRNF est très probablement issu du même vol. Cette comparaison valide le
+  *traitement*, pas la *mesure* LiDAR.
+
+### 4. Positions candidates (`src/candidates.py`)
+
+| Type | Nombre | Altitude du support (moy.) | Hauteurs possibles | Coût relatif |
+|---|---|---|---|---|
+| Mât le long de la clôture (tous les 20 m, recul 1 m) | 19 | 113,6 m | 4, 6, 8, 10 m | 1,0 + 0,10/m |
+| Mât intérieur (grille de 25 m) | 8 | 112,9 m | 4, 6, 8, 10 m | 1,0 + 0,10/m |
+| Coin de toit (recul 1,5 m) | 34 | 138,0 m | 2, 4 m | 0,8 + 0,10/m |
+| **Total** | **61 positions** | | **176 couples (position, hauteur)** | |
+
+11 mâts sur 27 tombent dans une végétation de plus de 3 m : premier signe du poids de la végétation dans les
+résultats. Ils sont conservés et signalés ; l'optimiseur décidera.
+
+## Semaine 2 — Visibilité, capteurs, matrice de couverture
+
+**Idée directrice : séparer la géométrie du capteur.** Pour chaque couple (position, hauteur), le moteur
+calcule une seule fois, sur 360°, l'épaisseur optique τ de la ligne de visée vers chaque cellule :
+τ = ∞ si un obstacle opaque est touché, τ = Σ kᵢ·ℓᵢ sinon (végétation traversée). Chaque capteur applique
+ensuite son propre modèle, pour un coût de calcul négligeable :
+
+P_det(x) = T(x) × P_capteur(distance, angles), avec T = e^(−α·τ)
+
+- les orientations (azimut des caméras, inclinaison des radars) ne demandent aucun nouveau calcul de
+  visibilité : **176 calculs de τ** pour **4 928 configurations** ;
+- le coefficient α distingue les capteurs (un radar traverse mieux le feuillage qu'une caméra) ;
+- on stocke τ, qui reste linéaire, plutôt que T.
+
+### 1. Végétation semi-transparente : fraction de trouée (`src/rasters.py`)
+
+**Modèle.** Loi de Beer-Lambert : la fraction de trouée verticale vaut P_gap = e^(−k·h_veg), d'où
+k = −ln(P_gap) / h_veg [m⁻¹]. Avec une distribution sphérique des angles de feuilles (G = 0,5), le même k
+s'applique aux rayons obliques.
+
+**Estimateur.** Premiers retours uniquement (un retour n° 2 au sol n'existe que parce que l'impulsion a déjà
+touché quelque chose), avec correction de Laplace : P̂_gap = (n_sol + 0,5) / (n + 1). Sans elle, un pixel
+sans retour sol donnerait k = ∞.
+
+| Surface | P_gap p10 / p50 / p90 | Lecture |
+|---|---|---|
+| Sol nu | 0,83 / 0,93 / 0,98 | 1 à 2 impulsions sur 22 touchent un objet bas de classe 1 (herbe, bordure). Sans effet : k n'est calculé qu'au-dessus de 0,3 m. |
+| Bâtiments | 0,02 / 0,02 / 0,10 | Plancher de Laplace 0,5/23 : aucune impulsion n'atteint le sol. |
+| Végétation > 2 m | 0,02 / 0,25 / 0,72 | Érables sans feuilles et conifères (p10 au plancher). |
+
+Premiers retours par pixel : 22 (médiane).
+
+| P_gap (arbre de 11 m) | k (m⁻¹) | Transmittance sur 10 m de branches |
+|---|---|---|
+| 0,72 (p90) | 0,03 | 0,74 |
+| 0,25 (médiane) | 0,13 | 0,28 |
+| 0,02 (p10) | 0,36 | 0,03 |
+
+Le même estimateur traite les **objets pleins** sans règle supplémentaire : une voiture n'a aucun premier
+retour au sol (k ≈ 2,7 m⁻¹ sur 1,5 m), un rayon qui la traverse sur 3 m a une transmittance d'environ
+3·10⁻⁴.
+
+**Bruit et biais.** Avec 22 impulsions, l'écart-type binomial de P̂_gap est d'environ ±0,09 par pixel. Pas de
+lissage : τ additionne une dizaine de pixels le long du rayon, et ce bruit indépendant s'y moyenne. Comme
+−ln est convexe, le bruit biaise k légèrement vers le haut (inégalité de Jensen) : l'erreur est pessimiste.
+
+### 2. Moteur de visibilité (`src/viewshed.py`)
+
+| Élément | Choix |
+|---|---|
+| Surface opaque | MNT + hauteur du bâti |
+| Couche de végétation | du MNT à MNT + `autre_h` (si > 0,3 m), coefficient k |
+| Cible | MNT + 1,0 m (centre du torse d'un intrus debout) |
+| Observateur | altitude du support + hauteur du mât |
+| Portée | 400 m ; courbure négligée (d²/2R = 1,3 cm à 400 m) |
+| Algorithme | parcours exact de toutes les cellules traversées (Amanatides & Woo, 1987) |
+| Codage | NaN = hors portée, ∞ = bloqué, T = e^(−τ) sinon |
+
+Dans chaque cellule traversée, le rayon est bloqué si son point le plus bas (entrée ou sortie de la cellule)
+passe sous la surface opaque. Sinon, la fraction exacte du passage située sous la canopée contribue
+k · fraction · longueur 3D. On utilise la **longueur 3D** : un rayon qui plonge traverse plus de végétation
+par mètre au sol. Les cellules du mât et de la cible sont exclues par convention.
+
+**Performance** : environ **16 ms** par calcul sur 5·10⁵ cellules (numba, parallèle).
+
+**Premiers constats**
+- **Un coin de toit ne voit qu'environ un quart des directions.** Sur les autres, le rayon doit d'abord
+  franchir le toit : pour un capteur 4 m au-dessus d'un bâtiment de 24 m, le sol n'est revu qu'à environ
+  L × 24/4 derrière le bord (180 m pour L = 30 m).
+- **Un mât dans les arbres voit à travers les branches, pas par-dessus.** Aucun obstacle opaque près du mât,
+  mais une visibilité surtout partielle. Passer de 4 à 10 m aide un peu entre 25 et 100 m, sans lever les
+  obstacles bâtis.
+
+### 3. Tests analytiques (`tests/test_viewshed.py`)
+
+Cinq terrains synthétiques à solution exacte, chacun isolant un terme du modèle :
+
+| Test | Terme vérifié | Solution de référence |
+|---|---|---|
+| Terrain plat | géométrie du disque, codage NaN / 0 | exact |
+| Mur | occultation opaque | longueur d'ombre D* = D_w·(h − t)/(h − H_w) (Thalès) |
+| Dalle de végétation infinie | Beer-Lambert, longueur 3D, axe et diagonale | τ = k × longueur 3D hors cellules extrêmes |
+| Dalle partielle | entrée du rayon dans la canopée | fraction (H_v − t)/(h − t) du trajet |
+| Pixel du mât | convention d'exclusion | exact |
+
+Tolérance relative de 10⁻⁵ : le parcours exact reproduit les formules à la précision du float32.
+
+### 4. Validation externe contre `gdal_viewshed`
+
+**Protocole.** Même surface (MNS entièrement opaque), mêmes hauteurs d'observateur et de cible (1,0 m),
+courbure désactivée (`-cc 0`), observateur au centre de cellule. Seule différence : l'algorithme (parcours
+exact ici, interpolation de l'horizon de Wang, Robinson & White, 2000, dans GDAL). **144 couples comparés.**
+32 couples exclus, car le capteur est sous le MNS (mât dans la végétation) : un outil 2,5D ne peut pas
+représenter ce cas, que ce moteur traite par semi-transparence.
+
+**Critères fixés avant l'expérience**
+
+| Critère | Seuil | Résultat |
+|---|---|---|
+| κ de Cohen médian | ≥ 0,85 | 0,870 ✅ |
+| IoU médian des zones visibles | ≥ 0,85 | 0,779 ❌ |
+| Désaccords à ≤ 2 px d'une frontière de visibilité | ≥ 80 % | 86,1 % ✅ |
+
+IoU agrégé (pondéré par la surface visible) : 0,804. On suit le κ plutôt que le seul pourcentage d'accord
+(99,2 %) : avec environ 80 % de cellules invisibles, l'accord brut est gonflé par le hasard.
+
+**Analyse de l'échec sur l'IoU**
+
+| Hypothèse | Test | Verdict |
+|---|---|---|
+| Effet de taille : l'IoU est instable pour les petites zones visibles | ρ(IoU, part visible) = 0,79 ; IoU médian de 0,60 (< 0,5 % visible) à 0,82 (> 5 %) | Confirmée : explique la queue, pas le plateau |
+| Rayons rasants (capteur à peine au-dessus du MNS) | ρ(κ, hauteur au-dessus du MNS) = −0,22 | Rejetée |
+| Décalage uniforme de l'horizon entre les moteurs | IoU en fonction d'une tolérance ε : non monotone | Rejetée |
+| Obstacle au voisinage immédiat du mât | 1 % des désaccords > 1 m dus à un obstacle à < 3 m | Rejetée |
+| **Un des deux moteurs est inexact** | **Arbitre exact** sur les cellules de désaccord | **Confirmée** |
+
+**Arbitre exact.** Pour le modèle en prismes (chaque pixel est un prisme de hauteur MNS), la visibilité a une
+solution exacte : parcourir toutes les cellules traversées et comparer le point le plus bas du rayon au
+sommet de chaque prisme. Appliqué aux cellules de désaccord :
+
+- **GDAL** : 100 % des cellules qu'il est seul à voir sont en réalité masquées. Son interpolation de
+  l'horizon fait « fuir » la visibilité par-dessus les obstacles, ce qui surestime la zone visible d'environ
+  15 % (cas médian).
+- **Version initiale de ce moteur** (rayon échantillonné tous les 0,5 px) : 17 à 26 % des cellules qu'il
+  était seul à voir étaient masquées. L'échantillonnage manquait les cellules effleurées par un coin, d'où
+  environ 1 % de faux visible. **Corrigé** en adoptant le parcours exact, qui donne aussi la longueur exacte
+  traversée dans la végétation et réduit le temps de calcul de 28 à 16 ms. Après correction : 100 % d'accord
+  avec l'arbitre.
+
+**Conclusion.** L'écart résiduel avec GDAL vient de l'approximation de GDAL, pas d'une erreur de ce moteur.
+Le critère d'IoU ≥ 0,85 était mal calibré : la variabilité entre algorithmes de visibilité est connue
+(Fisher, 1993), et elle est plus forte que je ne l'avais anticipé en tissu urbain dense. Le modèle en prismes
+est le plus conservateur des deux, puisqu'il épaissit les obstacles jusqu'à un pixel. Il sous-estime la
+couverture plutôt que de la surestimer, ce qui est le bon côté de l'erreur pour un système de sûreté.
+
+### 5. Modèles de capteurs (`src/sensors.py`)
+
+| | Caméra | Radar |
+|---|---|---|
+| Propagation | aller simple : T = e^(−α_c·τ) | aller-retour, sur la puissance : T² = e^(−2α_r·τ) |
+| Critère | densité de pixels sur la cible | rapport signal sur bruit |
+| Loi de détection | TTPF sur x = ppm / 25 px/m | Swerling I : P_d = P_fa^(1/(1+SNR)) |
+| Champ | sténopé exact, orientable (8 azimuts) | 360°, faisceau de ±15°, inclinaison 0/5/10/15° |
+| Végétation | α_c = 1 (justifié physiquement) | α_r = 0,3 (hypothèse) |
+
+**Caméra.**
+- **Géométrie en sténopé exacte.** Chaque cellule est projetée dans le repère de la caméra : l'empreinte
+  d'une caméra inclinée est un trapèze, pas un secteur. La densité de pixels se calcule à la profondeur
+  z = v·f le long de l'axe optique : ppm = N_h / (2z·tan(HFOV/2)).
+- **Seuil normatif et forme de la courbe.** Seuil de détection d'une personne : **25 px/m** (EN 62676-4,
+  critères DORI). La norme donne un seuil, pas une probabilité. La forme de la courbe est la TTPF issue des
+  critères de Johnson : P = x^E/(1 + x^E), E = 2,7 + 0,7x. Soit P = 0,5 au seuil, 0,94 au double et 0,11 à la
+  moitié. Calculée sous forme logistique en ln x pour éviter tout débordement numérique.
+- **Inclinaison automatique** selon la pratique d'installation : le bord haut de l'image vise le sol à
+  r_design, distance où la densité vaut 25 px/m. Seul l'azimut reste une variable de décision.
+- **α_c = 1.** Aux longueurs d'onde optiques, feuilles et branches sont beaucoup plus grandes que la longueur
+  d'onde : l'extinction est géométrique et ne dépend pas de la longueur d'onde. Le k mesuré par le LiDAR à
+  1 064 nm s'applique donc à une caméra visible ou proche infrarouge.
+
+| Objectif (1080p) | HFOV | r_design | Coût relatif |
+|---|---|---|---|
+| Grand angle | 90° | 38 m | 1,0 |
+| Standard | 60° | 67 m | 1,0 |
+| Téléobjectif | 30° | 143 m | 1,3 |
+
+**Radar.**
+- **Équation radar** calibrée sur une portée de référence : SNR(R) = SNR₉₀·(R₉₀/R)⁴·e^(−2α_r·τ), avec
+  R₉₀ = 150 m, P_fa = 10⁻⁶, d'où SNR₉₀ = ln(P_fa)/ln(0,9) − 1 = 130 (21,1 dB). Coût relatif : 5,0.
+- **Masque d'élévation** : faisceau de ±15° autour d'une inclinaison choisie parmi 0, 5, 10 et 15°.
+- **α_r = 0,3 est une hypothèse.** Aux longueurs d'onde centimétriques, rameaux et feuilles ont une taille
+  comparable à la longueur d'onde : l'optique géométrique ne s'applique plus, et l'atténuation dépend de la
+  fréquence et de la saison (ITU-R P.833). Ce paramètre sera soumis à l'analyse de sensibilité.
+
+**Contrôle de la troncature.** Le moteur ne calcule rien au-delà de 400 m. Un test de configuration vérifie
+que la probabilité idéale au bord du disque reste sous 5 % pour chaque capteur : 4,6 % pour le téléobjectif,
+2,1 % pour le radar.
+
+**Tests (`tests/test_sensors.py`).** Seuil DORI sur l'axe optique (P = 0,5 exactement), limites du champ
+horizontal et cible derrière la caméra, végétation en aller simple pour la caméra et en aller-retour pour le
+radar, portée de référence du radar (P = 0,9), masque d'élévation et inclinaison, opacité conservée quel que
+soit α, stabilité numérique de la TTPF, troncature du disque.
+
+**Démonstration** (surface efficace A_eff = Σ P·a sur le sol ; le rendement la compare au même capteur, au
+même endroit, sans aucun obstacle) :
+
+| Candidat | Capteur | Meilleur azimut | A_eff (m²) | Rendement |
+|---|---|---|---|---|
+| C052, coin de toit, 4 m | grand angle | 135° | 608 | 0,45 |
+| | standard | 180° | 1 055 | 0,59 |
+| | téléobjectif | 90° | 1 425 | 0,50 |
+| | radar | 360° | 18 212 | 0,14 |
+| C015, mât dans les arbres, 10 m | grand angle | 270° | 863 | 0,71 |
+| | standard | 225° | 1 090 | 0,49 |
+| | téléobjectif | 225° | 1 657 | 0,39 |
+
+- **C052** : les trois caméras ne couvrent rien à 0° ni à 315°. Seul le quadrant extérieur au bâtiment est
+  ouvert.
+- **C015** : le grand angle a un meilleur rendement dans les arbres (0,71) que sur le toit (0,45). Sur sa
+  courte portée, il voit à travers la végétation, alors que le toit perd ses directions derrière son propre
+  bâtiment. **Le meilleur emplacement dépend du capteur.**
+- **En surface brute, le téléobjectif l'emporte**, car la surface nominale varie comme HFOV × r_design²
+  (rapport 1 : 2,1 : 4,7 du grand angle au téléobjectif). Ce classement s'inverse une fois la couverture
+  pondérée par le site (section suivante).
+
+### 6. Matrice de couverture (`src/coverage.py`)
+
+**Formulation.**
+- Une **configuration** i est un choix de (position, hauteur, capteur, azimut ou inclinaison).
+- Une **cellule** j est un pixel de sol d'une zone de couverture, de poids w_j (poids de la zone × surface du
+  pixel).
+- La matrice contient **A_ij = P_det**. Elle est stockée **creuse** (format CSR) : les P < 0,01 sont mises à
+  zéro, et la perte est mesurée.
+- Les coûts du support (mât ou toit) et du capteur restent **séparés** : un mât payé une fois peut porter
+  plusieurs capteurs.
+
+**Contrôle de rastérisation** (règle du centre de pixel, sol uniquement) :
+
+| Zone | Poids | Surface du polygone (m²) | Pixels | Pixels retenus (sol) |
+|---|---|---|---|---|
+| Bat.3 | 10 | 3 255 | 3 259 | 3 175 |
+| Bat.1 | 5 | 1 603 | 1 599 | 1 533 |
+| Bat.2 | 4 | 223 | 223 | 217 |
+| Bat.4 | 4 | 565 | 564 | 534 |
+| Gaz Bat.3 | 4 | 119 | 119 | 119 |
+| Générateur | 4 | 29 | 32 | 32 |
+| Périphérie | 1 | 4 362 | 4 363 | 4 363 |
+
+Le masque sol retire 2 à 5 % des pixels autour des bâtiments (bords de toits vus par le LiDAR au-delà des
+polygones dessinés). Le Générateur montre l'effet de la résolution sur une petite zone : +10 %.
+
+**Résultats**
+
+| Indicateur | Valeur |
+|---|---|
+| Cellules / poids total W | 9 973 / 47 386 |
+| Configurations utiles / écartées (aucune couverture) | 3 259 / 1 669 |
+| Non-nuls (densité) | 3,04 millions (9,4 %) |
+| Perte due au seuil p_min = 0,01 | 0,011 % de la couverture pondérée |
+| Temps de construction | 7 s |
+
+Part du poids couverte par **une seule** configuration (Σ w·P / W) :
+
+| Capteur | Configurations | Médiane | p90 | Max |
+|---|---|---|---|---|
+| Grand angle | 1 165 | 0,009 | 0,053 | 0,105 |
+| Standard | 885 | 0,009 | 0,051 | 0,129 |
+| Téléobjectif | 597 | 0,004 | 0,033 | 0,122 |
+| Radar | 612 | 0,147 | 0,451 | 0,486 |
+
+| Médiane | Grand angle | Standard | Téléobjectif | Radar |
+|---|---|---|---|---|
+| Mât de clôture | 0,005 | 0,004 | 0,004 | 0,347 |
+| Mât intérieur | 0,035 | 0,017 | 0,004 | 0,313 |
+| Toit | 0,006 | 0,010 | 0,003 | 0,019 |
+
+**Lecture**
+- **Une fois pondéré par le site, le téléobjectif perd son avantage** (médiane 0,004 contre 0,009) : sa
+  portée utile tombe surtout hors du site.
+- **Même le meilleur radar ne couvre que 49 % du poids** (C020, mât intérieur de 4 m). Un seul capteur ne
+  suffit pas : les ombres des quatre bâtiments imposent des combinaisons.
+- **Le catalogue de positions suffit** : seulement 0,6 % des cellules (0,6 % du poids) ne sont vues à
+  P ≥ 0,5 par aucune configuration, même seule (`p_max.tif`). Elles sont surtout autour de Bat.1 et Bat.2.
+  Le problème est un arbitrage de budget, pas un manque de positions.
+
+**Une correction de modèle en cours de route.** La première version plaçait le faisceau radar sur
+l'horizontale (±15°). Les radars de toit, environ 27 m au-dessus du sol, ne voyaient alors le sol qu'au-delà
+d'environ 100 m, donc aucune cellule du site (médiane 0,003, 39 couples sans aucune couverture). Un
+installateur inclinerait le radar vers le bas : l'inclinaison est devenue une variable de décision.
+Résultats :
+- **Toits** : médiane de 0,003 à 0,019. Les radars de toit restent limités, car même incliné le faisceau
+  laisse un cône aveugle d'environ 47 m.
+- **Mâts** : les plus hauts remontent dans le classement (C014 à 10 m : 0,483).
+- **L'inclinaison optimale place le bord haut du faisceau à l'horizon** (15°), avec moins de 0,2 point
+  d'écart entre 5 et 15° : sur un site plat, toutes les cibles ont un angle entre 0 et 30° sous l'horizontale.
+  L'inclinaison reste une variable, car elle redevient déterminante sur un terrain en pente.
+
+### 7. Ce qu'il faut retenir de la semaine 2
+
+1. **Valider contre un outil établi ne suffit pas** : GDAL et le moteur étaient en désaccord. C'est un
+   arbitre exact qui a montré que GDAL surestimait la visibilité (environ 15 %) et qu'une première version
+   du moteur la surestimait aussi (environ 1 %, corrigé).
+2. **Un coin de toit ne voit qu'environ un quart des directions** : il convient à une caméra orientée vers
+   l'extérieur, pas à un radar à 360°.
+3. **Le meilleur emplacement dépend du capteur** : un mât dans les arbres convient à un grand angle, pas à
+   un téléobjectif.
+4. **La surface brute trompe** : le téléobjectif domine en surface, mais pas en couverture pondérée du site.
+5. **Un seul capteur ne suffit pas** : même le meilleur radar couvre moins de la moitié du poids.
+
+---
+
+## Semaine 3 — Optimisation : glouton et optimum certifié
+
+La formulation complète, avec les preuves, est dans [`docs/formulation.md`](formulation.md). Cette
+section en résume les choix et les résultats.
+
+### 1. Formulation
+
+On maximise la **couverture pondérée espérée** d'un intrus, sous contrainte de budget :
+
+max F(x) = Σᵢ wᵢ · (1 − Πⱼ (1 − Pᵢⱼ)^xⱼ)
+
+- **Détection probabiliste.** L'intrus n'échappe à la détection que s'il échappe à chaque capteur, les
+  détections étant supposées indépendantes. F est non linéaire, monotone et **sous-modulaire** : chaque
+  capteur ajouté rapporte moins que le précédent.
+- **Variables.** xⱼ ∈ {0, 1} pour chacune des 3 259 configurations, et y_s ∈ {0, 1} pour chacun des 171
+  supports (position, hauteur).
+- **Contraintes :**
+  - **(C1) Budget** : Σ coût capteur + Σ coût support ≤ B. Un mât est payé une seule fois, quel que soit
+    le nombre de capteurs qu'il porte.
+  - **(C2) Liaison** : un capteur n'existe que si son support est construit.
+  - **(C3) Une seule hauteur par emplacement** : on ne pose pas un mât de 4 m et un de 10 m au même endroit.
+  - **(C4) Capacité par support** : 1 radar au plus (il a besoin du sommet dégagé) et 4 caméras au plus.
+    Deux caméras à la même hauteur sur un mât, dans des directions différentes, sont donc autorisées.
+- **Budget** balayé de 2 à 30 unités par pas de 1. On ne choisit pas un budget : on trace la courbe.
+
+`src/instance.py` regroupe ce que les solveurs partagent : le chargement, l'évaluation **exacte** de F et le
+contrôle des contraintes. Le glouton et la décomposition sont jugés par la même fonction.
+
+### 2. Glouton au ratio (`src/greedy.py`)
+
+- **Gains marginaux en un seul produit.** Le gain de la configuration j vaut Δⱼ = Σᵢ wᵢ qᵢ Pᵢⱼ, où qᵢ est
+  la probabilité de non-détection courante. Tous les gains se calculent donc par un produit matrice creuse ×
+  vecteur, Δ = A·(w ⊙ q). Une itération prend quelques millisecondes, et les 29 budgets se traitent en moins
+  d'une seconde.
+- **Coût marginal.** Coût du capteur, plus celui du support s'il n'est pas encore ouvert. Les configurations
+  interdites par (C1), (C3) et (C4) sont masquées.
+- **Meilleur entre le ratio gain/coût et le meilleur capteur isolé.** Le ratio seul peut être arbitrairement
+  mauvais (Khuller, Moss et Naor, 1999) : un test construit le montre (valeur 1 contre 100).
+
+**Aucune garantie d'approximation ici.** La garantie (1 − 1/e) de Nemhauser, Wolsey et Fisher (1978) vaut
+pour une contrainte de *cardinalité*. Avec un budget et des coûts additifs, la version corrigée garantit
+½(1 − 1/e) ≈ 0,32. Avec nos coûts de support partagés et le verrouillage de hauteur (C3), même cette garantie
+tombe. Le glouton sert donc de référence rapide et de borne inférieure. Seule la décomposition du §3 certifie
+la qualité d'une solution.
+
+**Tests (`tests/test_greedy.py`, 54 tests).** Comparaison à la force brute sur 40 instances aléatoires
+(8 configurations, 2⁸ sous-ensembles) : le glouton ne dépasse jamais l'optimum. Il l'atteint dans 69 % des
+109 cas, et descend au pire à 75 %. S'y ajoutent des cas construits :
+- le cas pathologique du ratio seul ;
+- le verrouillage de hauteur ;
+- la capacité radar ;
+- le support payé une seule fois.
+
+### 3. Optimum certifié
+
+**Premier essai : MILP compact à coupes tangentes, rejeté.** On pose σᵢ = Σⱼ −ln(1 − Pᵢⱼ)·xⱼ, qui est
+linéaire en x. La détection vaut alors exactement 1 − e^(−σᵢ), et on majore cette fonction concave par
+10 tangentes (surestimation ≤ 0,010 par cellule). Le modèle est correct, mais intraitable :
+
+| Mesure (B = 12) | Résultat |
+|---|---|
+| Taille | 113 356 lignes, 23 376 colonnes, **3,26 M non-nuls** |
+| Branch-and-bound (HiGHS) | aucune solution réalisable en 150 s |
+| Relaxation continue (point intérieur) | 84 s, borne **0,927**, avec des fractions de capteur sur 31 configurations |
+| Meilleure solution connue | 0,680 |
+
+La relaxation continue est trop faible : des fractions xⱼ = 0,3 réparties partout « voient » presque tout
+le site.
+
+**Méthode retenue : coupes sous-modulaires multi-blocs (`src/milp.py`).** On découpe les cellules en
+163 blocs spatiaux de 10 m, et F = Σ_g F_g. Chaque F_g est monotone et sous-modulaire, d'où l'inégalité de
+Nemhauser et Wolsey (1981), valable pour tous S et T :
+
+F_g(T) ≤ F_g(S) + Σ_{j∈T∖S} ρ_gj(S),  avec ρ_gj(S) = Σ_{i∈g} wᵢ qᵢ(S) Pᵢⱼ
+
+- **Problème maître** sur (x, y, η) seulement, soit 3 430 variables binaires : max Σ_g η_g sous (C1)–(C4)
+  et une coupe par bloc pour chaque ensemble S déjà visité.
+- **Boucle** : on résout le maître, ce qui donne T et une borne supérieure. On évalue F(T) exactement, ce
+  qui donne une borne inférieure. On ajoute les coupes en T, et on recommence jusqu'à un écart de 0,5 %.
+- **Objectif exact** : pas de logarithme, pas de plafonnement de P, pas de tangente.
+- **Borne supérieure = borne duale de HiGHS**, et non la valeur de sa meilleure solution. Elle reste valide
+  même quand le maître s'arrête sur sa limite de temps.
+- **Coupes indépendantes du budget.** On les amorce avec les ensembles successifs du glouton et l'optimum du
+  budget précédent.
+
+**Pourquoi plusieurs blocs.** Une seule coupe globale laisse le maître « emprunter » la couverture promise à
+une zone pour la créditer à une autre.
+
+| Découpage (B = 12, 150 s) | Itérations | Écart certifié |
+|---|---|---|
+| 1 bloc (algorithme original) | 11 | 6,4 % |
+| 163 blocs de 10 m | 4 | 0,95 % |
+
+**Tests (`tests/test_milp.py`, 105 tests).**
+- Optimum de la force brute retrouvé exactement, pour 1, 5 et 20 blocs.
+- Validité de chaque coupe pour des S et T aléatoires.
+- Le cas du verrouillage de hauteur, où l'optimum trouve le mât de 10 m que le glouton rate.
+- Les contraintes (C3) et (C4).
+
+**Une correction en cours de route.** Le premier critère d'arrêt concluait à l'optimum dès que le maître
+renvoyait un ensemble déjà coupé. C'est vrai seulement si le maître a prouvé son propre optimum, pas s'il
+s'est arrêté sur sa limite de temps : deux budgets étaient déclarés convergés avec un écart de 1,6 et 2,1 %.
+Le critère exige maintenant le statut optimal du maître.
+
+### 4. Résultats (`src/pareto.py`)
+
+Balayage complet : 29 budgets, 207 min de calcul (limite de 15 min par budget).
+
+![Couverture en fonction du budget](../figures/front.png)
+
+| Budget | Glouton | Optimum certifié [LB ; UB] | Solution optimale |
+|---|---|---|---|
+| 4 | 16,7 % | 20,9 % | 2 caméras sur un mât de **10 m** |
+| 6 | 27,3 % | 31,4 % | 3 caméras, mâts de 4 et 8 m |
+| 7 | 48,6 % | 48,6 % | 1 radar |
+| 12 | 68,0 % | 68,2 % | 1 radar + 3 caméras |
+| 13 | 82,8 % | 82,8 % | 2 radars |
+| 20 | 87,9 % | [87,9 ; 88,8] % | 3 radars |
+| 30 | 91,9 % | [93,8 ; 95,2] % | 4 radars + 3 caméras |
+
+**Lecture**
+1. **Le front monte par paliers radar.** Le premier radar ajoute 17 points (B = 7), le second 15 points
+   (B = 13). **Le coude est à B = 13** : deux radars couvrent 82,8 % du poids, et les 17 unités de budget
+   suivantes n'en ajoutent que 11. C'est la conclusion utile à un décideur.
+2. **Le glouton ne perd vraiment qu'à deux endroits.**
+   - À petit budget, avec des caméras seules : il perd jusqu'à **20 %** (B = 4), parce qu'il verrouille des
+     mâts de 4 m, moins chers, alors que l'optimum monte à 8 ou 10 m.
+   - À partir de 3 ou 4 radars : il perd jusqu'à 2 points de couverture (B = 30).
+
+   Entre les deux, le radar domine au point que le glouton est optimal. Sa perte médiane est de 0,2 %.
+3. **Tous les budgets sont encadrés à moins de 2,8 %, mais seuls 16 sur 29 atteignent la cible de 0,5 %.**
+   Au-delà de B = 18, chaque résolution du maître atteint sa limite de 120 s sans resserrer sa borne
+   supérieure : on le voit aux paliers plats des courbes de convergence. **Le goulot est la difficulté du
+   maître lui-même**, pas le nombre de coupes.
+
+![Perte du glouton et écart certifié](../figures/ecarts.png)
+
+![Convergence de la décomposition](../figures/convergence.png)
+
+### 5. Analyse spatiale (`src/analyse.py`)
+
+![Solutions optimales certifiées à B = 4, 13 et 30](../figures/carte_solutions.png)
+
+- **À B = 13, deux radars suffisent** : l'un dans l'espace ouvert à l'ouest, l'autre dans la cour centrale.
+  Les zones qui restent mal vues sont celles derrière le bâtiment nord et à l'est, dans l'ombre des
+  bâtiments.
+- **À B = 30, l'optimum ajoute deux radars au nord et un mât de 3 caméras dans le coin sud-est.** Les
+  caméras couvrent ce qu'aucun radar ne voit, entre les deux bâtiments de l'est : l'association radar et
+  caméras sert à combler les ombres.
+
+![Ce que le glouton ne voit pas](../figures/carte_glouton.png)
+
+**Où le glouton perd.**
+- À B = 4, il pose ses caméras sur un mât de 4 m au nord-est. L'optimum monte à 10 m sur le flanc ouest, là
+  où se trouve l'essentiel du poids.
+- À B = 30, la perte vient de bandes étroites le long des murs : ce sont les angles morts à pied de
+  bâtiment.
+
+**Couverture par zone** (optimum certifié, `zones.csv`) :
+
+| Zone | Part du poids W | B = 4 | B = 13 | B = 30 | Cellules à P < 0,5 (B = 30) |
+|---|---|---|---|---|---|
+| Bat.3 | **67 %** | 28 % | 89 % | 96 % | 4 % |
+| Bat.1 | 16 % | 0 % | 58 % | 84 % | 16 % |
+| Périphérie | 9 % | 8 % | 95 % | 100 % | 0 % |
+| Bat.4 | 4,5 % | 19 % | 62 % | 91 % | 9 % |
+| Bat.2 | 1,8 % | 0 % | 50 % | 86 % | 12 % |
+| Gaz Bat.3 | 1,0 % | 67 % | 100 % | 100 % | 0 % |
+
+**Bat.3 pèse les deux tiers de l'objectif.** Son poids de zone vaut 10, et son grand anneau d'approche le
+multiplie encore, puisque le poids est compté par m². L'optimiseur protège donc Bat.3 d'abord. À B = 13,
+Bat.1 n'est couvert qu'à 58 %, alors que c'est le deuxième actif du site. Ce n'est pas un défaut de
+l'optimiseur, mais une conséquence directe du choix de pondération, qui sera testée dans l'analyse de
+sensibilité.
+
+### 6. Ce qu'il faut retenir de la semaine 3
+
+1. **Une formulation correcte peut être inutilisable.** Le MILP compact était juste, mais sa relaxation
+   laissait 36 % d'écart pour plus d'une minute par nœud. Exploiter la structure sous-modulaire a donné un
+   problème maître de 3 600 variables au lieu de 23 000, avec un objectif exact.
+2. **Certifier plutôt que croire.** Le glouton n'a aucune garantie théorique ici. C'est l'encadrement
+   [LB, UB] qui montre qu'il est quasi optimal au-delà de B = 7, et mauvais en dessous.
+3. **Une limite de temps n'est pas une preuve.** La borne duale reste valide, mais « le maître a renvoyé la
+   même solution » ne prouve l'optimum que si le maître a lui-même conclu.
+4. **Le budget décisif est celui du deuxième radar** (B = 13, 82,8 %). Au-delà, les rendements sont
+   décroissants.
+5. **La pondération fait la solution** : deux tiers du poids sont sur un seul actif.
+
+---
+
+## Semaine 4 — L'intrus : pire chemin et optimisation multi-objectif
+
+La semaine 3 maximisait une couverture **moyenne**. Un intrus qui connaît le dispositif ne se déplace pas au
+hasard : il choisit le chemin le moins surveillé. Cette semaine mesure ce chemin, montre que les deux
+critères divergent, puis les optimise ensemble. La formulation complète, avec les preuves, est dans la §7 de
+[`docs/formulation.md`](formulation.md).
+
+### 1. Diagnostic : surveiller l'intérieur ne suffit pas
+
+Premier essai : l'intrus part de la clôture et vise Bat.3, sur les seules cellules intérieures. La détection
+sur son meilleur chemin est **nulle à tous les budgets** (B = 4, 13 et 30), pour un chemin d'une seule
+cellule. Un coin de Bat.3 est à **1,18 m de la clôture** : l'intrus franchit le grillage et touche le mur
+sans traverser aucune cellule surveillée. C'est la faiblesse volontairement conservée en semaine 1 (choix
+méthodologique n° 7), et elle est plus sévère que prévu. **Un actif collé à la clôture ne peut pas être
+protégé par des capteurs qui ne regardent que l'intérieur.** Le domaine de l'intrus inclut donc une bande
+extérieure de 30 m.
+
+### 2. Deux profils d'intrus
+
+| Profil | Franchissement | Temps sur place |
+|---|---|---|
+| **Déterminé (F)** | n'importe où sur la clôture | 10 s pour escalader le grillage, 3 s à un portail |
+| **Opportuniste (G)** | par un des 4 portails seulement | 3 s |
+
+- **Le profil déterminé est toujours le pire cas.** Tout chemin par un portail est aussi un chemin du
+  profil déterminé, au même coût, donc m_F ≤ m_G pour les deux métriques ci-dessous.
+- **« Plus probablement par les portails »** devient un paramètre, π = 0,8, et un indicateur de mélange
+  D_π = π·m_G + (1 − π)·m_F.
+- **D_π ne sert pas à dimensionner.** Une solution qui verrouille les portails mais laisse la clôture sans
+  surveillance obtient D_0,8 = 0,8 alors qu'un intrus déterminé passe à coup sûr. On dimensionne contre une
+  *menace de référence* (Garcia, 2007), c'est-à-dire contre le profil déterminé. Le cas se produit réellement
+  (§5).
+
+### 3. Deux métriques du pire chemin (`src/intrus.py`)
+
+Les deux formulations naïves sont fausses :
+- un Dijkstra sur « coût = P » additionne des probabilités, et le résultat dépasse 1 dès 3 cellules à 0,4 ;
+- 1 − Π(1 − P) le long du chemin compte une observation par cellule, et double quand on divise la taille
+  des cellules par deux.
+
+| Métrique | Définition | Hypothèse | Rôle |
+|---|---|---|---|
+| **p\* (seuil du couloir)** | min sur les chemins de max_{v ∈ chemin} P_v | aucune le long du chemin | **Borne inférieure garantie** : « détecté quelque part » contient « détecté au meilleur point ». Métrique de conception. |
+| **Λ\* (exposition)** | min sur les chemins de Σ σ_v·Δt_v / τ_obs, avec σ = −ln(1 − P) ; P_chemin = 1 − e^(−Λ\*) | une observation indépendante toutes les τ_obs secondes | Estimation, invariante à la résolution. Indicateur. |
+
+- **p\*** se calcule exactement en une passe d'**union-find** : on ajoute les nœuds par P croissante
+  jusqu'à relier départs et cible (≈ 14 ms sur le site). C'est le *maximal breach path* de la couverture de
+  barrière (Meguerdichian et al., 2001).
+- **Λ\*** se calcule par un Dijkstra multi-source. Le poids d'une arête vaut
+  (σ_u + σ_v)/2 × (ℓ/v + t_franchissement)/τ_obs : le temps passé à escalader la clôture est exposé.
+- **Un piège de `scipy.sparse.csgraph`** : une arête de poids exactement 0, entre deux cellules que personne
+  ne voit, est traitée comme absente. Ce sont précisément les arêtes que l'intrus préfère. Chaque poids reçoit
+  10⁻¹² ; sans cela, l'intrus contournerait les zones aveugles au lieu de les emprunter.
+
+| Paramètre | Valeur | Statut |
+|---|---|---|
+| Bande extérieure | 30 m | choix, sensibilité à faire |
+| Vitesse de l'intrus | 1,5 m/s (marche) | hypothèse |
+| τ_obs | 1 s (sensibilité : 0,5 et 5 s) | hypothèse |
+| Temps d'escalade / de portail | 10 s / 3 s | hypothèses |
+| π (part d'opportunistes) | 0,8 | hypothèse |
+
+### 4. Domaine et graphe (`src/intrusion.py`)
+
+![Domaine de l'intrus](../figures/domaine.png)
+
+| Élément | Valeur |
+|---|---|
+| Cellules | 27 905 : les 9 973 intérieures de la semaine 3, dans le même ordre, et 17 932 extérieures |
+| Départs / cibles (Bat.3) | 1 026 / 273 |
+| Arêtes (8-connexité) | 109 543, dont 1 512 qui franchissent la clôture et 27 par un portail |
+| `A_intrus` | 4 151 configurations × 27 905 cellules, 8,9 M non-nuls, 50 s |
+| **Non-régression** | **écart max = 0** avec `A` sur les colonnes intérieures |
+
+- **La clôture est portée par les arêtes**, pas par les cellules : une arête franchit si ses deux cellules
+  sont de part et d'autre du périmètre, et passe par un portail si son segment coupe l'ouverture (largeur lue
+  dans le type, « Portail 3m »). Un profil d'intrus n'est alors qu'un masque d'arêtes.
+- **Les cibles sont intérieures.** Une cellule extérieure est à moins de 1,5 m de Bat.3 ; la compter comme
+  cible ferait gagner l'intrus sans franchir la clôture.
+- **892 configurations nouvelles**, qui ne voient que l'extérieur (surtout des caméras tournées vers
+  l'extérieur). Leur F est nul, donc la semaine 3 les avait écartées. Elles sont indispensables pour ne pas
+  rendre le problème insoluble par construction.
+- **La bande extérieure ne contient aucun obstacle** : l'approche se fait à découvert.
+
+**Tests (`tests/test_intrusion.py`, 10 tests, et `tests/test_intrus.py`, 12 tests)** :
+- 8-connexité exacte, diagonale refusée entre deux coins d'obstacles, franchissement ⇔ changement de côté,
+  lecture de la largeur des portails ;
+- couloir entre deux murs (p\* exact), union-find égal à une dichotomie sur 20 instances aléatoires, goulot
+  obligatoire, cible inatteignable ;
+- Λ exact sur une ligne droite, **invariance à la résolution** (Λ identique à 1 m et 0,5 m, alors que le
+  produit par cellule change), temps de franchissement, détection certaine qui bloque ;
+- m_F ≤ m_G sur 20 instances aléatoires, égalité quand le portail est le seul passage.
+
+### 5. Les solutions de la semaine 3 face à l'intrus (`src/evaluation_intrus.py`)
+
+Les 58 solutions (29 budgets, MILP et glouton) sont réévaluées en environ 10 s.
+
+![Couverture et pire cas en fonction du budget](../figures/budget_intrus.png)
+
+| B | Solution | F | p\*_F (déterminé) | p\*_G (portails) |
+|---|---|---|---|---|
+| 12 | MILP : 1 radar + 3 caméras | 68,2 % | **0** | 0,30 |
+| 13 | MILP : 2 radars (C020, C025 incliné à 10°) | 82,8 % | 0,96 | 0,96 |
+| 15 | MILP : + 1 caméra | 84,2 % | 0,96 | 0,96 |
+| **16** | **MILP : radar C025 → C026, + 2 caméras de toit** | 84,9 % | **0,29** | 0,98 |
+| 16 | Glouton : garde C025, + 1 caméra | 84,7 % | 0,96 | 0,96 |
+| 18 | MILP | 86,1 % | **0,29** | 0,98 |
+| 19 | MILP : 3 radars | 86,5 % | 0,61 | 0,98 |
+
+**Lecture**
+1. **Couvrir n'est pas protéger.** Jusqu'à B = 12, aucune solution n'arrête un intrus déterminé (p\*_F = 0),
+   alors que F atteint déjà 68 %.
+2. **Optimiser la moyenne peut ouvrir un trou.** À B = 16, l'optimum de F gagne 0,6 point en déplaçant un
+   radar, et perd **67 points** de détection garantie. La carte montre pourquoi : le radar déplacé laisse la
+   zone extérieure sud sans surveillance, et l'intrus y passe pour atteindre le coin de Bat.3 à 1,18 m de la
+   clôture. Aux budgets 16, 18 et 19, **le glouton est plus robuste que l'optimum**.
+3. **Le piège de D_π se produit.** À B = 16, un intrus par les portails est détecté à 0,98, un intrus
+   déterminé à 0,29 : D_0,8 = 0,84 masque le trou.
+4. **L'exposition sature.** Dès que p\* dépasse 0,9, P_chemin vaut 1,00 à τ_obs = 1 s, et encore 0,98 à
+   τ_obs = 5 s : l'indépendance entre observations successives multiplie les chances de détection. Seul p\*
+   distingue encore les dispositifs.
+
+![Le trou ouvert par l'optimum de F à B = 16](../figures/chemins_decouplage.png)
+
+![Couverture moyenne contre pire cas](../figures/F_vs_pstar.png)
+
+Aucune solution MILP n'est pourtant *dominée* sur (coût, F, p\*_F) : la solution de B = 16 a le meilleur F à
+son coût. Ce n'est pas une erreur du MILP, c'est un **arbitrage** qu'un optimiseur mono-objectif ne peut pas
+exposer. D'où NSGA-II.
+
+### 6. NSGA-II (`src/nsga.py`)
+
+| Élément | Choix |
+|---|---|
+| Objectifs | coût ↓, F ↑, p\*_F ↑ |
+| Variables | 4 151 bits, un par configuration de `A_intrus` |
+| Croisement | enfant = sous-ensemble aléatoire de l'union des parents |
+| Mutation | ajout, retrait, remplacement, ou **voisinage** (même emplacement : autre hauteur, capteur, azimut ou inclinaison) |
+| Réparation | (C3), (C4), coût ≤ 30, par retraits **aléatoires** |
+| Amorçage | les 58 solutions de la semaine 3 + individus aléatoires réparés |
+| k-couverture des équipements | indicateur (voir ci-dessous) |
+| Réglages | population 100, 200 générations, 5 graines ; ≈ 2 min par graine |
+
+- **Des opérateurs pour des solutions creuses.** Une solution contient 2 à 10 bits sur 4 151 : une mutation
+  bit à bit n'ajouterait presque que des capteurs. Le croisement et la mutation travaillent donc sur des
+  ensembles.
+- **Réparation aléatoire plutôt que gloutonne.** Retirer d'abord la configuration au plus faible gain de F
+  éliminerait systématiquement les caméras extérieures, dont F est nul mais qui peuvent faire p\*.
+- **Une évaluation prend environ 6 ms** (détection, F, p\* par union-find) : 20 000 évaluations par
+  graine restent abordables.
+
+### 7. Validation et résultats (`src/analyse_nsga.py`)
+
+![Front coût / couverture / pire cas](../figures/front_nsga.png)
+
+**Validation contre la semaine 3**
+- **Aucune des 175 solutions du front global ne dépasse la borne UB certifiée.** C'est le contrôle
+  d'absence de bug, rare pour une métaheuristique.
+- **NSGA-II améliore la meilleure solution connue à 6 budgets** (21, 23, 24, 25, 26 et 29 ; de +0,03 à
+  +0,47 point de F), précisément ceux où le MILP s'était arrêté sur sa limite de temps. L'écart résiduel à la
+  borne UB est au plus de 2,6 points.
+- **Réserve** : aux autres budgets, l'écart nul à la meilleure solution connue vient en partie de
+  l'amorçage. Ce n'est pas une preuve que NSGA-II l'aurait retrouvée seul.
+- **12 des 58 solutions de la semaine 3 sont dominées** par le front (4 MILP : B = 21, 24, 25, 26 ; 8
+  gloutonnes).
+
+**Prix de la robustesse**
+
+![Prix de la robustesse](../figures/prix_robustesse.png)
+
+| Budget | Meilleur F | Meilleur F avec p\*_F ≥ 0,95 | Prix |
+|---|---|---|---|
+| < 12,8 | jusqu'à 68,2 % | **aucune solution** | — |
+| 13 à 15, 17, 20 à 30 | — | identique | **0 point** |
+| 16 | 84,9 % | 84,7 % | 0,17 point |
+| 18 | 86,1 % | 85,6 % | 0,48 point |
+| 19 | 86,5 % | 85,9 % | 0,62 point |
+
+- **Il existe un budget seuil de robustesse : 12,8 unités**, soit deux radars sur mâts intérieurs. En
+  dessous, aucun dispositif ne garantit p\*_F ≥ 0,9, quelle que soit sa couverture.
+- **Au-delà, la robustesse coûte moins de 0,7 point de F.** Les trous de la semaine 3 n'étaient pas le prix
+  d'une meilleure couverture : rien ne poussait l'optimiseur à les éviter.
+- **Les configurations qui ne voient que l'extérieur ne servent presque jamais** (3 solutions sur 175) :
+  les radars sur mâts intérieurs couvrent déjà la bande extérieure.
+- **La k-couverture des équipements n'est atteinte qu'à partir de 25,6 unités** (4 radars : au moins 2
+  capteurs à P ≥ 0,5 sur 90 % des cellules du gaz et du générateur). En contrainte dure, elle aurait vidé le
+  front en dessous : elle reste un indicateur, activable dans `config.yaml`.
+
+**Convergence**
+
+![Convergence de NSGA-II](../figures/hv.png)
+
+L'hypervolume final vaut 0,562 ± 0,0018 sur 5 graines, mais **les courbes montent encore à 20 000
+évaluations**, par paliers : la convergence n'est pas atteinte. Le front publié est une approximation,
+encadrée par la borne certifiée sur (coût, F).
+
+### 8. Ce qu'il faut retenir de la semaine 4
+
+1. **Couvrir n'est pas protéger.** 68 % de couverture pondérée peuvent laisser un couloir entièrement
+   aveugle.
+2. **Optimiser la moyenne peut dégrader le pire cas** : +0,6 point de F, −67 points de détection garantie.
+3. **La robustesse a un seuil, pas un coût.** Rien n'est possible sous 12,8 unités ; au-delà, l'exiger coûte
+   moins de 0,7 point. Elle doit figurer dans le cahier des charges.
+4. **Une borne garantie vaut mieux qu'une probabilité sous hypothèses** : l'exposition sature et ne
+   distingue plus rien, p\* reste discriminant.
+5. **La géométrie du site impose de détecter à l'extérieur** : un actif à 1,18 m de la clôture ne se protège
+   pas depuis l'intérieur.
+6. **Un mélange de profils masque le pire cas** (D = 0,84 pour une détection garantie de 0,29).
+
+---
+
+## Semaines 5–6 — Modèle de substitution : carte de potentiel d'implantation
+
+Le plan prévoyait un U-Net pour accélérer le calcul des viewsheds. Ces deux semaines montrent pourquoi ce plan ne tenait pas, ce qu'on a construit à la place, et ce que vaut ce modèle quand on lui demande de guider une décision. La formulation complète est dans la §8 de [`docs/formulation.md`](formulation.md).
+
+### 1. Diagnostic : il n'y avait pas de goulot
+
+| Mesure (2 cœurs CPU) | Valeur |
+|---|---|
+| Calculs de τ nécessaires au catalogue | **176** : τ ne dépend ni du capteur ni de l'orientation (choix n° 16) |
+| τ sur le disque de 400 m / sur les seules cellules utiles | 220 ms / 6,4 ms, résultat identique |
+| U-Net (1,9 M paramètres), une carte 816 × 816 | 582 ms, **2,6 fois plus lent** que le moteur exact |
+
+Les « milliers de viewsheds » de la description du projet n'existent pas, et un surrogate par observateur serait plus lent et moins précis que ce qu'il remplace. Le coût exact ne devient prohibitif que si l'on veut la visibilité depuis **toutes** les positions d'une zone. C'est le *total viewshed*, en O(N·R²) : environ 1 h sur la zone actuelle, contre une seule passe en O(N) pour un réseau entièrement convolutif.
+
+### 2. Cible et données (`src/dataset_surrogate.py`)
+
+Pour chaque position o, chaque hauteur h (2 à 10 m au-dessus de la surface opaque), chaque anneau (0–50 et 50–150 m) et chaque secteur de 45°, V est la part de la surface du bin qui est du sol visible, pondérée par la transmittance e^(−τ). Cela fait 80 sorties par position, calculées par le noyau exact de la semaine 2.
+- **Données** : 30 000 observateurs stratifiés (toits, sol dégagé, sol sous végétation) pour l'entraînement et la validation, plus 18 056 observateurs de test. Coût : 8,8 ms par position sur le Mac, soit environ 7 min.
+- **Découpage spatial** : le bloc test contient le site, un tampon de 30 m l'entoure, et la validation est faite de tuiles de 100 m tirées au hasard. Deux positions voisines ont des étiquettes presque identiques : un tirage aléatoire des cellules mesurerait une interpolation, pas une généralisation.
+- **Trois propriétés vérifiées par des tests** :
+  - l'augmentation par rotations et miroirs (groupe D4) est **exacte**, les secteurs étant permutés avec le terrain ;
+  - V est monotone en h **seulement sans végétation**. Un rayon qui traverse une colonne de canopée y parcourt √(1 + pente²) m par mètre horizontal. Sur les données, la monotonie est violée dans 9,6 % des cas ;
+  - l'orientation compte : le meilleur secteur voit en médiane 3,45 fois plus que la moyenne.
+
+![Découpage spatial](../figures/decoupage.png)
+
+### 3. Trois familles de modèles
+
+| Modèle (bloc test, h = 6 m) | EAM | Spearman | Regret top-20 | Coût par position |
+|---|---|---|---|---|
+| Calcul exact | 0 | 1 | 0 | 8 800 µs |
+| B0 : moyenne par strate | 0,144 | 0,46 | 66 % | ≈ 0 |
+| B1 : angles d'horizon exacts par secteur + boosting | 0,044 | 0,926 | 9,7 % | 221 µs |
+| **B2 : horizons par pyramide log-polaire + boosting** | **0,042** | **0,936** | **6,1 %** | **116 µs** |
+| U-Net brut (`src/surrogate.py`) | 0,072 | 0,796 | 11 % | 0,2 µs |
+| U-Net physique (`src/surrogate_physique.py`) | 0,053 | 0,878 | 15 % | 27 µs |
+
+![Erreur contre coût](../figures/surrogate_cout_erreur.png)
+
+- **Le U-Net brut sous-apprend.** Il est moins bon que B1 même en validation (0,051 contre 0,029), avec le même décalage test/validation. Un CNN reconstruit mal un maximum le long de rayons divisé par la distance : c'est un biais inductif manquant, pas un réglage à revoir.
+- **Pyramide log-polaire (`src/horizons.py`).** Des blocs de 1 à 15 px, lus tous les p pixels et préfiltrés une fois pour la grille, donnent des horizons à **38 fois moins cher** que le calcul exact (1 204 lectures au lieu de 70 680), avec environ 1° d'erreur et une bande proche exacte.
+- **B2 montre que l'approximation ne coûte rien.** Il égale B1, parce que la variable qui manquait n'était pas géométrique : c'était **la part de sol par bin**, qui borne V. Horizons à h = 0 : 0,061 ; à chaque hauteur : 0,058 ; avec la part de sol : 0,042.
+- **Le U-Net physique**, qui reçoit ces horizons en entrée, réduit l'erreur du U-Net brut de 26 %, mais reste derrière B2. Suivant la règle fixée avant l'expérience, **B2 est retenu**. À l'échelle du site, les temps de calcul sont tous négligeables devant l'heure du calcul exact : c'est donc la précision qui décide.
+
+### 4. Validation par la décision (`src/catalogue_surrogate.py`)
+
+La vraie question est la suivante : un catalogue de positions candidates choisi par B2 donne-t-il de meilleurs dispositifs que celui de la semaine 1 ? Chaque catalogue est évalué exactement, avec les mêmes effectifs et le même protocole : glouton sur 29 budgets, p\*, NSGA-II. Deux témoins l'encadrent : un **oracle** (même critère, valeurs exactes) et un **tirage aléatoire**.
+
+| Catalogue (61 positions) | F moyen (glouton) | F, B = 13 | p\*_F, B = 13 | Hypervolume |
+|---|---|---|---|---|
+| Manuel (semaine 1) | 0,698 | 0,828 | 0,96 | 0,551 |
+| Aléatoire | 0,696 | 0,826 | 0,94 | 0,544 |
+| B2, potentiel géométrique V̄ | 0,609 | 0,620 | **0** | 0,466 |
+| Oracle, potentiel géométrique V̄ | 0,615 | 0,621 | **0** | 0,405 |
+| B2, score pondéré | 0,702 | 0,819 | 0,91 | 0,534 |
+| Oracle, score pondéré | 0,700 | 0,834 | 0,93 | 0,550 |
+
+![Catalogues](../figures/decision_carte.png)
+
+1. **Le potentiel géométrique entasse les mâts dans le coin dégagé du site.** L'oracle échoue autant que B2 : le problème vient du **critère**, pas du modèle. V̄ et la couverture pondérée d'une position ont une corrélation de rang de 0,09 pour les radars et de 0,01 pour les caméras. La meilleure position de la semaine 3 n'arrive qu'au 119ᵉ rang sur 174.
+2. **Pondérer chaque bin par la masse de poids qu'il contient** fait passer ces corrélations à 0,69 et 0,82, sans rien réentraîner. B2 égale alors l'oracle, mais **aucun catalogue ne bat le manuel ni le tirage aléatoire**. Avec 61 positions, un site de 1,5 ha est saturé.
+
+![Couverture et détection garantie selon le budget](../figures/decision_budget.png)
+
+### 5. Catalogues réduits et protocole préenregistré (`src/catalogue_reduit.py`)
+
+Si la sélection ne sert à rien quand les positions abondent, elle devrait servir quand elles sont rares. Avec K = 5 à 20 positions, **ce n'est pas le cas**. Un premier test semblait prometteur : avec un espacement de 25 m / 15 m, 20 positions choisies par B2 retrouvaient le niveau des 61 du catalogue manuel. Mais cet espacement avait été choisi **après** avoir vu les résultats.
+
+Le test définitif a donc été **préenregistré** : espacement fixé par une règle géométrique, bande extérieure ajoutée au score, succès si B2 bat **le meilleur de 5 tirages aléatoires** pour au moins 3 tailles sur 4.
+
+| K | B2 pondéré + bande | B2 pondéré | Aléatoire, moyenne / max | Sous-catalogue manuel |
+|---|---|---|---|---|
+| 5 | 0,443 | 0,540 | 0,575 / 0,603 | 0,561 |
+| 10 | 0,550 | 0,618 | 0,610 / 0,669 | 0,601 |
+| 15 | 0,583 | 0,636 | 0,663 / 0,685 | 0,619 |
+| 20 | 0,584 | 0,633 | 0,677 / 0,687 | 0,662 |
+
+**Résultat : 0 taille sur 4. Échec.** Le résultat prometteur était un faux positif, dû à un réglage fait sur le jeu de test. Une exécution de contrôle, où B2 avait été entraîné avec une autre version de scikit-learn, donnait 1 sur 4 : ce seul changement suffisait à renverser la conclusion à K = 20.
+
+![Catalogues réduits, protocole préenregistré](../figures/decision_reduit_preenregistre.png)
+
+**Pourquoi.** La couverture est sous-modulaire : la valeur d'une position dépend de celles déjà choisies. Prendre les K meilleures positions une par une accumule des positions qui regardent toutes les mêmes zones. Une carte de potentiel **par position** ne peut pas porter l'information nécessaire (« quelles cellules voit-elle ? »), et sur ce site, cette information s'obtient exactement en quelques minutes.
+
+### 6. Ce qu'il faut retenir des semaines 5–6
+
+1. **Mesurer le goulot avant de le traiter.** Il n'existait pas ; l'architecture de la semaine 2 l'avait déjà supprimé.
+2. **Le deep learning généraliste perd contre un modèle physique simple**, et ne s'en approche qu'en recevant la physique en entrée. La contribution durable de ces deux semaines est **la pyramide log-polaire** : 38 fois moins chère que l'horizon exact, sans perte mesurable.
+3. **Un modèle précis ne garantit pas une bonne décision.** La cible géométrique était bien apprise (B2 = oracle), mais elle ne mesurait pas l'objectif.
+4. **Choisir un ensemble n'est pas classer des éléments** : c'est un problème sous-modulaire, et un score par position ne peut pas en tenir compte.
+5. **Préenregistrer le protocole** a transformé un « succès » apparent en échec documenté. Sans lui, ce README annoncerait un résultat faux.
+6. **Des témoins simples et bien choisis** (l'oracle, le tirage aléatoire espacé) ont désigné la vraie cause à chaque étape.
+
+---
+
+## Semaine 7 — Détection opportune, boucle adversariale exacte, sensibilité
+
+La semaine 4 mesurait si l'intrus est détecté. Cette semaine demande s'il l'est **à temps**, puis construit
+la boucle « l'optimiseur place, l'intrus trouve la faille, l'optimiseur corrige » sous une forme qui converge
+et certifie son résultat. La formulation et les preuves sont dans la §9 de [`docs/formulation.md`](formulation.md).
+
+### 1. Détection opportune (`src/opportune.py`)
+
+Une détection ne sert que si la réponse arrive avant que l'intrus atteigne la cible (modèle EASI, Garcia
+2007). On note d(v) le temps minimal de v jusqu'à la cible, clôture comprise. **d ne dépend pas des
+capteurs** : un seul Dijkstra depuis les cibles suffit. Une détection en v compte si d(v) ≥ T_R, le temps de
+réponse, d'où une détection opportune garantie p̃\*. C'est une borne inférieure prouvée, dont on mesure
+l'écart à la valeur exacte le long du couloir : **cet écart est nul** sur le site.
+
+![Temps restant jusqu'à la cible](../figures/temps_restant.png)
+
+| Profil | T_min | Médiane depuis les départs | Chemin le plus rapide |
+|---|---|---|---|
+| Déterminé (F) | **30,3 s** | 58 s | 30 m tout droit au sud, escalade, contact immédiat avec le coin de Bat.3 |
+| Opportuniste (G) | **33,0 s** | 65 s | portail 2 : 23,6 s dehors, 9,4 s dedans |
+
+**Proposition** (démontrée en §9.1) : si T_R > T_min, alors p̃\* = 0 **pour tout dispositif**. Une réponse
+réelle prend plusieurs minutes. Sur ce site, la protection passe donc par le **retard** (clôture) ou par une
+**détection plus lointaine**, pas par des capteurs supplémentaires.
+
+| Solution du front (meilleur p\*_F à coût ≤ B) | T_R = 0 | 10 s | 20 s | 30 s |
+|---|---|---|---|---|
+| B = 13, profil F | 0,965 | **0** | 0 | 0 |
+| B = 20, profil F | 1,000 | 0,098 | 0 | 0 |
+| B = 30, profil F | 1,000 | 0,997 | 0 | 0 |
+| Catalogue complet (plafond), profil F | 1 | 1 | 1 | 1 |
+
+![Détection opportune en fonction du temps de réponse](../figures/opportune.png)
+
+**Le « p\*_F ≥ 0,95 » de la semaine 4 était presque entièrement tardif.** À B = 13, p̃\*_F tombe sous 0,5
+dès T_R = 2,5 s : l'intrus n'est vu qu'au contact du bâtiment. Le catalogue, lui, permet une détection
+opportune certaine jusqu'à T_min. La faille ne vient pas des capteurs disponibles, mais de l'objectif
+optimisé.
+
+### 2. La boucle adversariale exacte (`src/boucle.py`)
+
+**Linéarisation.** Avec s_vj = −ln(1 − P_vj), la condition P_v ≥ θ devient Σ_j C_vj x_j ≥ 1, où
+C_vj = min(s_vj / s_θ, 1). « Aucun couloir sous θ » devient : tout chemin contient un nœud utile atteignant θ.
+
+| Rôle | Contenu |
+|---|---|
+| **Maître** (MILP, HiGHS) | coût minimal sous (C2)–(C4) et sous les coupes des couloirs connus |
+| **Intrus** (oracle) | union-find de la semaine 4 sur la solution du maître ; renvoie 20 couloirs ouverts |
+| **Arrêt** | l'intrus ne trouve plus de couloir, et le maître prouve que rien de moins cher n'existe |
+
+La boucle naïve (pénaliser le dernier couloir) peut osciller. Celle-ci est une **génération de contraintes** :
+le maître est une relaxation, donc sa borne est valide à chaque itération, et la boucle termine
+(proposition 3).
+
+**Rendre la boucle praticable** (4 151 configurations, 27 905 nœuds). Chaque choix est exact et documenté en
+§9.2.
+
+| Obstacle mesuré | Réponse |
+|---|---|
+| Borne bloquée à 2,7 pour un optimum de 12,8 : la liaison z ≤ Σ C x est faible en relaxation | **coupe agrégée en x**, Σ_j max_{v∈γ} C_vj x_j ≥ 1 ; les variables z ne sont créées que si l'intrus exploite des capteurs partiels |
+| Maître encore lent sous l'hypothèse d'indépendance (coefficients fractionnaires) | résolution exacte sous la **fusion max** (P_v = max_j P_vj) : couverture d'ensembles pure, dont la solution reste valide sous indépendance |
+| Chaque cas repart de zéro | **réservoir de couloirs** partagé : tout couloir donne une coupe valide pour tout (θ, T_R) |
+| Le maître prouve lentement son optimalité | **coupure** par la meilleure solution connue, coûts en multiples de 0,1 ; l'infaisabilité du maître prouve l'optimalité |
+| 30 à 60 % de configurations inutiles | retrait des configurations **vides** ou **dominées** (même support, ensemble couvert inclus) |
+
+**Validation.** Sur 36 instances jouets (clôture, portail, (C3), (C4)), l'optimum est égal à celui d'une
+**énumération exhaustive** des 2⁷ dispositifs, sous les deux fusions. Chaque solution du site est revérifiée
+par `src.intrus`, indépendamment des coefficients C.
+
+### 3. Coût minimal d'une détection opportune garantie
+
+Profil déterminé, fusion max. Tous les cas sont **certifiés optimaux** (entre 47 s et 19 min par cas).
+
+| θ \ T_R | 0 | 10 s | 20 s | 30 s |
+|---|---|---|---|---|
+| 0,5 | **10,4** (front : 12,8) | **10,6** (20,2) | **11,3** (28,6) | **11,3** (29,0) |
+| 0,9 | **12,8** (12,8) | **13,5** (22,0) | **15,4** (28,6) | **15,4** (aucun) |
+| 0,95 | **12,8** (12,8) | **14,4** (22,0) | **17,3** (28,6) | **17,8** (aucun) |
+
+Entre parenthèses : le coût du point le moins cher du front NSGA-II de la semaine 4 qui satisfait la même
+exigence.
+
+![Coût minimal robuste](../figures/cout_robuste.png)
+
+1. **Le seuil de 12,8 unités de la semaine 4 est prouvé.** Deux radars sur mâts intérieurs sont l'optimum pour
+   θ = 0,9 et θ = 0,95 à T_R = 0. NSGA-II l'avait trouvé, sans pouvoir le prouver.
+2. **Détecter à temps coûte peu, à condition de le demander.** Garantir 0,9 à T_R = 20 s coûte 15,4, contre
+   28,6 pour le front, qui n'optimisait pas ce critère. Le coût supplémentaire par rapport à T_R = 0 est de
+   2,6 unités.
+3. **La géométrie de la solution change avec T_R.** À T_R = 0 : 2 radars. À T_R = 10 s : 1 radar et 3
+   caméras. À T_R = 20 s : 1 radar et 5 caméras, dont le F n'est plus que de 7 %. Détecter tôt, c'est
+   **regarder dehors**, là où le poids de la couverture est nul.
+4. **Sous l'hypothèse d'indépendance, l'optimum est encadré** (θ = 0,9, 10 min par cas) : [10,5 ; 12,8] à
+   T_R = 0, [11,3 ; 13,5] à 10 s, [11,9 ; 15,4] à 20 s et [14,1 ; 15,4] à 30 s. La borne haute est chaque fois
+   l'optimum de la fusion max : aucune combinaison de capteurs partiels moins chère n'a été trouvée.
+   Dimensionner sous la fusion max est prudent, puisque ses solutions restent valides si les détections sont
+   corrélées (brouillard, intrus qui rampe).
+
+![Convergence de la boucle](../figures/boucle_convergence.png)
+
+### 4. Prix de la robustesse certifié
+
+Couverture maximale à budget donné, avec ou sans la contrainte p̃\*_F ≥ θ. On utilise les coupes
+sous-modulaires de la semaine 3, auxquelles s'ajoutent les coupes de couloirs. Chaque F est encadré.
+
+| B | Exigence | F sans exigence | F avec exigence | Prix | Dispositif robuste |
+|---|---|---|---|---|---|
+| 16 | θ = 0,95, T_R = 0 | [84,9 ; 85,3] % | [84,7 ; 84,7] % | **[0,13 ; 0,61] pt** | 2 radars, 2 caméras |
+| 19 | θ = 0,95, T_R = 0 | [86,6 ; 89,5] % | [86,2 ; 88,5] % | [0 ; 3,3] pt | 3 radars |
+| 20 | θ = 0,9, T_R = 10 s | [87,9 ; 90,4] % | [85,2 ; 88,9] % | [0 ; 5,1] pt | 3 radars, 1 caméra |
+| 30 | θ = 0,9, T_R = 20 s | [93,8 ; 95,3] % | [93,4 ; 95,3] % | **[0 ; 1,9] pt** | 4 radars, 2 caméras |
+
+- À B = 16, l'encadrement certifié [0,13 ; 0,61] contient l'estimation de NSGA-II (0,17 point).
+- **À B = 30, la détection opportune garantie passe de 0 à 0,986** (T_R = 20 s) pour au plus 1,9 point de
+  couverture. Ce qui semblait un compromis entre regarder dehors et couvrir dedans disparaît dès que le
+  budget permet un radar de plus.
+- Les encadrements larges (B = 19, 20) viennent de la limite de 30 min par cas sur 2 cœurs, pas de la méthode.
+
+### 6. Analyse de sensibilité par regret de décision (`src/sensibilite.py`)
+
+La question n'est pas « la métrique varie-t-elle ? » mais « **qu'aurait coûté de se tromper ?** ». Pour chaque
+scénario, on garde la décision nominale (D_0 : 2 radars, 12,8 ; D_10 : 1 radar et 3 caméras, 13,5), on
+vérifie si elle tient, et on recalcule l'optimum certifié c\*_s. Le protocole, les scénarios et quatre
+prédictions ont été **fixés avant le calcul** (§9.3 de `formulation.md`).
+
+**Contrôles.** Le domaine et `A_intrus` nominaux sont reconstruits à l'identique (écart max = 0), et le
+scénario nominal redonne 12,8 et 13,5. Changer le feuillage ne demande pas de toucher au moteur de visibilité :
+τ est linéaire en k, donc k × f ⇔ α × f (vérifié par un test).
+
+![Regret des décisions nominales](../figures/regret.png)
+
+| Scénario | T_min | D_0 : p̃\* (tient ?) | c\*_s | D_10 : p̃\* (tient ?) | c\*_s |
+|---|---|---|---|---|---|
+| Nominal | 30,3 s | 0,96 ✓ | 12,8 | 0,93 ✓ | 13,5 |
+| Retard (30, 3) à (120, 120) s | 33 à 140 s | 0,96 ✓ | 12,8 | 0,93 ✓ | 13,5 |
+| Vitesse 1 m/s | 40,4 s | 0,96 ✓ | 12,8 | 0,93 ✓ | 13,1 (regret 0,4) |
+| **Vitesse 3 m/s (course)** | **18,0 s** | 0,96 ✓ | 12,8 | **0,00 ✗** | 15,4 (+1,9) |
+| **Bande 15 m** | 19,6 s | 0,96 ✓ | 12,8 | **0,66 ✗** | 14,6 (+1,1) |
+| Bande 50 m | 44,6 s | 0,96 ✓ | 12,6 (regret 0,2) | 0,93 ✓ | 12,6 (regret 0,9) |
+| **Feuillage × 2** | 30,3 s | **0,87 ✗** | 13,2 (+0,4) | **0,38 ✗** | 14,6 (+1,1) |
+| **Feuillage × 4** | 30,3 s | **0,23 ✗** | 14,7 (+1,9) | **0,00 ✗** | 16,6 (+3,1) |
+
+**Prédictions préenregistrées**
+
+| | Prédiction | Verdict |
+|---|---|---|
+| H1 | Renforcer la clôture seule plafonne T_min vers 33 s (l'intrus passe par un portail) | **Confirmée** : 30,3 → 33,0 s. Il faut renforcer aussi les portails (50,3 s). |
+| H2 | À la course, T_min tombe vers 20 s et D_10 ne tient plus | **Confirmée** : 18,0 s, p̃\* = 0. |
+| H3 | Le feuillage pénalise surtout les caméras ; D_0 (radars) tient à f = 2 | **Réfutée pour D_0** : p̃\* = 0,87. Le radar subit l'atténuation à l'aller et au retour : 2 × 0,3 × f = 1,2 à f = 2, soit plus que la caméra nominale (α = 1). |
+| H4 | La bande touche surtout D_10, qui détecte à l'extérieur | **Confirmée** : à 15 m, D_10 tombe à 0,66, D_0 est intact. |
+
+**Selon le critère préenregistré, aucune des deux décisions n'est stable** : D_0 tient dans 9 scénarios sur
+11, D_10 dans 7 sur 11. Les écarts restent modestes, entre 0,4 et 3,1 unités.
+
+**Le retard est le vrai levier**
+
+![Matrice retard × temps de réponse](../figures/frontiere_retard.png)
+
+- **Tant qu'un cas est réalisable, le coût ne dépend pas du retard** : 12,8, 13,5 et 15,4 pour T_R = 0, 10
+  et 30 s, quel que soit (t_c, t_p). Le retard ne rend pas les capteurs moins chers. Il **rend possibles**
+  des temps de réponse qui ne l'étaient pas.
+- Avec clôture et portails à 120 s, **une réponse en 2 minutes est couverte pour 15,4**, le même dispositif
+  que pour 30 s. Sans retard, elle est impossible quel que soit le budget.
+- Renforcer la clôture sans les portails ne sert presque à rien (+2,7 s). Le retard se dimensionne sur le
+  **maillon le plus faible**.
+
+**Ce qu'il faut retenir de l'analyse de sensibilité**
+1. **Dimensionner avec le feuillage.** Le vol LiDAR date de novembre : les transmittances nominales sont
+   optimistes pour l'été. Ce facteur casse les deux décisions ; le couvrir coûte +0,4 (D_0) à +1,1 (D_10) à
+   f = 2.
+2. **Le profil de l'intrus compte plus que la géométrie fine.** À la course, T_min passe de 30 à 18 s ;
+   c'est le scénario le plus défavorable pour D_10.
+3. **Les décisions qui détectent tôt sont les plus fragiles.** D_10 regarde dehors, là où la bande, la
+   vitesse et le feuillage agissent tous.
+4. **La largeur de bande est une hypothèse de modélisation qui change la réponse** : à 50 m, l'optimum est
+   moins cher (12,6), parce que chaque chemin traverse plus de terrain surveillable. Ce n'est acceptable que
+   si une détection sur la voie publique est vraiment exploitable (limite §7.7-3).
+5. **τ_obs et π n'ont pas été simulés**, parce qu'ils n'entrent pas dans p̃\*_F : les décisions y sont
+   insensibles par construction.
+
+### 7. Ce qu'il faut retenir de la semaine 7
+
+1. **Détecter n'est pas interrompre.** Au-delà de T_min ≈ 30 s de temps de réponse, aucun capteur ne protège
+   Bat.3 : c'est une propriété du site, démontrée, pas un défaut de l'optimisation.
+2. **Un optimum mono-critère cache ses failles, même quand il est robuste.** Le p\* ≥ 0,95 de la semaine 4
+   reposait sur une détection au contact du bâtiment.
+3. **La boucle optimiseur ↔ intrus peut être exacte.** Écrite comme une génération de contraintes, elle
+   termine et certifie : le seuil de 12,8 unités est prouvé.
+4. **L'exigence doit figurer dans l'objectif.** Demandée explicitement, la détection opportune coûte 15,4 au
+   lieu de 28,6, et à B = 30 elle ne coûte presque rien en couverture.
+5. **Chaque accélération a été choisie sur une mesure** (borne bloquée, maître lent, configurations vides) et
+   reste exacte ; la force brute la valide.
+6. **Le retard est le levier que les capteurs ne remplacent pas.** Renforcer clôture et portails à 120 s
+   rend couvrable une réponse en 2 minutes pour 15,4 unités ; sans retard, elle est impossible.
+7. **Aucune décision nominale n'est stable** au sens préenregistré : le feuillage d'été et un intrus qui
+   court suffisent à les casser, pour un surcoût de réparation de 0,4 à 3,1 unités.
+
+---
+
+## Semaine 8 — Démo interactive et article
+
+```bash
+python -m streamlit run app.py
+```
+
+![Démo](../figures/demo.png)
+
+La démo a deux usages, parce que les deux opérations n'ont pas le même coût :
+
+| Opération | Coût | Dans la démo |
+|---|---|---|
+| Trouver l'optimum certifié | minutes (boucle de la semaine 7) | consulté : solutions déjà calculées (`src.boucle`, `src.nsga`) |
+| Évaluer un dispositif face à l'intrus | ≈ 0,1 s | **en direct** : détection, couloirs, p\*, p̃\*, T_min |
+
+- **Solutions certifiées** : choisir θ et T_R, voir l'optimum prouvé et ses couloirs.
+- **Front NSGA-II** : choisir un budget et un critère (couverture ou pire cas).
+- **Placement manuel** : ajouter ou retirer un capteur (emplacement, hauteur, type, azimut ou inclinaison) ;
+  l'intrus recalcule sa faille à chaque clic. C'est la boucle « l'optimiseur place, l'intrus trouve la
+  faille » rendue visible.
+- **Paramètres de l'intrus** : temps de réponse, vitesse, retard de la clôture et des portails. La carte
+  grise la zone où une détection arrive trop tard, et la page signale quand T_R dépasse T_min (aucun
+  dispositif ne peut alors protéger).
+
+Carte en coordonnées locales (plotly) plutôt que pydeck : aucune clé de fond de carte, aucune reprojection,
+et un fond neutre (ombrage du relief et bâti tirés du LiDAR). La page n'optimise rien : toute la logique est
+dans `src/demo.py`, testée seule, et `tests/test_demo.py` exécute la page complète avec `AppTest`.
+
+**Article** : [`docs/article.md`](article.md), une synthèse du projet en huit étapes, pour un lecteur
+qui n'a pas le temps de lire ce README.
+
+---
+
+## Choix méthodologiques
+
+**Organisation**
+1. **Une seule projection (EPSG:2950)** pour toutes les données, celle du LiDAR, en mètres. Le site est
+   dessiné directement dans cette projection.
+2. **`config.yaml` ne contient que des paramètres choisis** ; tout ce qui est calculé (grille, zones dérivées)
+   est écrit dans des fichiers de sortie régénérables.
+3. **Une grille unique** (`grid.yaml`) calée sur des coordonnées entières : tous les rasters sont alignés au
+   pixel près.
+
+**Modélisation du site**
+4. **On surveille les abords, pas les toits.** Les emprises des bâtiments sont des *actifs* (cibles de
+   l'intrus, obstacles opaques) ; le poids est porté par un anneau d'approche au sol de 15 m.
+5. **Règle du maximum** là où des anneaux se chevauchent : une surface est aussi critique que l'actif le plus
+   important qu'elle dessert. Implémentée en attribuant les surfaces par priorité décroissante.
+6. **Les équipements ponctuels** (gaz, générateur) pèsent moins de 1 % d'un objectif pondéré par la surface ;
+   ils seront traités par une **contrainte de k-couverture** (chaque point vulnérable vu par au moins k
+   capteurs) plutôt que par un poids. Exemple : l'anneau de « Gaz Bat.1 » est entièrement absorbé par ceux de
+   Bat.3 et Bat.1.
+7. **Faiblesse volontairement conservée** : Bat.3 (cœur) est à moins de 15 m de la clôture, avec un accès dans
+   son anneau. Cas test pour l'intrus de la semaine 4.
+
+**Traitement LiDAR**
+8. **Accumulation par blocs plutôt que chargement complet** : nombre, somme, min et max sont fusionnables,
+   ce qui garantit une mémoire constante et un alignement exact contrôlé par le code.
+9. **MNT = moyenne des points sol** (≈ 12 par pixel), plus robuste au bruit de mesure que le minimum.
+10. **Les pixels interpolés sont tracés** (`mnt_comble.tif`) pour distinguer mesure et interpolation dans
+    toutes les analyses.
+11. **Végétation non classée** : premier indicateur = part des retours multiples dans la classe 1 (un
+    feuillage produit plusieurs échos, un toit ou un poteau un seul).
+12. **Vol sans feuilles** (21 novembre) : la végétation feuillue sera plus transparente qu'en été. Ce point
+    sera exploité dans l'analyse de sensibilité à la saison.
+13. **Objets en toiture** : des points de classe 1 atteignent 50 à 74 m au-dessus du sol (antennes,
+    équipements). La classe 1 au-dessus des bâtiments ne doit pas être prise pour de la végétation.
+14. **Contrôle croisé dessin ↔ LiDAR** : un coin de toit dessiné qui ne tombe pas sur `bati_mask` est
+    rejeté.
+
+**Validation**
+15. **Deux références, deux questions** : PDAL valide la mise en grille, le MRNF la chaîne complète.
+    Indicateurs : biais, RMSE, NMAD (robuste, standard pour les MNT), 99ᵉ centile, calculés séparément sur
+    le sol mesuré et le sol interpolé.
+
+**Visibilité**
+16. **Séparer la géométrie du capteur** : τ est calculé une fois par couple (position, hauteur), les modèles
+    de capteurs s'appliquent ensuite. On stocke τ (linéaire), pas T.
+17. **Fraction de trouée par colonne plutôt que voxels 3D** : mesurable directement sur les premiers retours,
+    robuste avec 22 impulsions par pixel. Les voxels restent une amélioration possible, notamment pour
+    estimer la base du houppier.
+18. **Surface en prismes et parcours exact** : c'est le modèle le plus conservateur ; il ne rate aucun
+    obstacle.
+19. **Cible à 1,0 m au-dessus du MNT, cellules du mât et de la cible exclues** : conventions explicites,
+    vérifiées par des tests.
+
+**Validation**
+20. **Critères fixés avant l'expérience** et échec documenté plutôt que seuil ajusté a posteriori.
+21. **Des hypothèses testées une par une**, y compris celles qui ont été réfutées.
+22. **Un arbitre exact plutôt qu'une référence logicielle** : GDAL est une autre approximation, pas la vérité.
+
+**Capteurs**
+23. **Seuil normatif et forme de courbe séparés** : EN 62676-4 fixe le point à 50 %, la TTPF donne la forme.
+    C'est un choix de modélisation, assumé comme tel.
+24. **Réglages d'installateur** : l'inclinaison des caméras est déterminée par r_design, tandis que l'azimut
+    des caméras et l'inclinaison des radars sont des variables de décision discrètes.
+25. **Propagation aller simple pour la caméra (passive), aller-retour pour le radar (actif).**
+26. **Troncature contrôlée par un test de configuration** : changer une portée sans agrandir le disque de
+    calcul fait échouer les tests.
+
+**Couverture**
+27. **Cellules = sol des zones pondérées uniquement** ; matrice creuse, perte due au seuil mesurée (0,011 %).
+28. **Coûts du support et du capteur séparés** : un mât est un coût fixe partagé entre ses capteurs.
+
+**Optimisation**
+29. **Couverture probabiliste plutôt que binaire** : 1 − Π(1 − P) conserve l'information de visibilité
+    partielle construite en semaine 2, au lieu d'un seuil « couvert si P ≥ τ ».
+30. **Balayer le budget plutôt qu'en choisir un** : le front répond à « que m'achète chaque unité de plus ? ».
+31. **Une seule fonction d'évaluation exacte** (`instance.evaluate`) pour tous les solveurs.
+32. **Exploiter la sous-modularité plutôt que linéariser** : le modèle compact est rejeté sur mesures
+    (taille, temps, qualité de la relaxation), et ces mesures sont documentées.
+33. **Certifier par la borne duale** : chaque résultat est un encadrement [LB, UB], jamais une valeur
+    présentée comme optimale sans preuve.
+34. **Coupes par blocs spatiaux** : un compromis mesuré entre la force des coupes et la taille du maître.
+
+**Intrus (semaine 4)**
+35. **Intrus omniscient et menace de référence** : on dimensionne contre l'intrus déterminé (pire cas) ;
+    le mélange D_π sert à l'analyse de risque, pas à la conception.
+36. **La clôture est un ensemble d'arêtes** : un profil d'intrus n'est qu'un masque d'arêtes autorisées.
+37. **Deux métriques qui encadrent** : p\* est une borne inférieure sans hypothèse le long du chemin, Λ une
+    estimation sous indépendance. La conception suit p\*.
+38. **Exposition écrite en temps** : le franchissement de la clôture est exposé, et la métrique est
+    invariante à la résolution (vérifié par un test).
+39. **Une matrice distincte pour l'intrus** (`A_intrus`), avec un contrôle de non-régression exact : la
+    semaine 3 reste reproductible à l'identique.
+40. **Catalogue étendu** aux configurations qui ne voient que l'extérieur, écartées en semaine 3 parce que
+    leur F est nul.
+41. **NSGA-II validé contre une borne certifiée**, avec des opérateurs sur des ensembles creux et une
+    réparation aléatoire, qui ne pénalise pas les capteurs à F nul.
+42. **k-couverture en indicateur plutôt qu'en contrainte**, après avoir mesuré qu'elle n'est réalisable
+    qu'à partir de 25,6 unités.
+
+**Modèle de substitution (semaines 5–6)**
+43. **Mesurer le goulot avant de construire le modèle** : le diagnostic a remplacé la cible prévue (viewshed
+    par observateur) par celle où le réseau a un avantage de structure (total viewshed).
+44. **Cible agrégée par bins, exacte par construction** : même noyau que le moteur de visibilité, vérifié
+    par un test d'égalité.
+45. **Découpage spatial avec tampon**, le site dans le test ; la fuite résiduelle par les entrées est assumée
+    et documentée.
+46. **Références avant le réseau** (B0, B1) et règle de choix fixée avant l'expérience : c'est B2, et non le
+    réseau, qui a été retenu.
+47. **Symétries exploitées et testées** : augmentation D4 exacte, équivariance par translation, normalisation
+    locale (BatchNorm) après la détection d'un défaut de GroupNorm par le test du champ récepteur.
+48. **Donner la physique au modèle plutôt que l'agrandir** : horizons denses par pyramide log-polaire, coût et
+    erreur mesurés contre l'horizon exact.
+49. **Valider par la décision, avec un oracle et un témoin aléatoire** : sépare l'erreur du modèle de celle
+    du critère.
+50. **Protocole préenregistré** (règle d'espacement, critère de succès) après un premier résultat obtenu par
+    réglage a posteriori ; son échec est publié tel quel.
+
+**Détection opportune et boucle adversariale (semaine 7)**
+51. **Temps restant indépendant des capteurs** : d(v) est calculé une fois ; le masque d(v) ≥ T_R donne une
+    borne inférieure prouvée, dont l'écart à la valeur le long du couloir est mesuré (nul sur le site).
+52. **Plafond du catalogue** (toutes les configurations actives) : il sépare ce qui est physiquement
+    impossible de ce que l'optimiseur n'a pas cherché.
+53. **Génération de contraintes plutôt que boucle naïve** : l'intrus est l'oracle de séparation, la borne du
+    maître est valide à chaque itération.
+54. **Coupe agrégée en x, z seulement à la demande** : choisie après avoir mesuré une borne bloquée à 2,7
+    pour un optimum de 12,8.
+55. **Fusion max pour l'optimum certifié, fusion produit en encadrement** : la première est exacte et
+    rapide, et ses solutions restent valides sous la seconde.
+56. **Réservoir de couloirs, coupure par l'incumbent, retrait des configurations dominées** : trois
+    accélérations exactes, validées par énumération exhaustive sur instances jouets.
+57. **Regret de décision plutôt que variation de métrique** : on mesure ce que coûte de s'être trompé
+    (sur-dimensionnement ou surcoût de réparation), avec un optimum certifié dans chaque scénario.
+58. **Protocole et prédictions préenregistrés**, y compris une prédiction réfutée (H3), publiée telle quelle.
+59. **Configurations identifiées par clé** : une décision se transporte d'un scénario à l'autre même quand
+    `A_intrus` est reconstruite.
+60. **Feuillage par α × f**, exact car τ est linéaire en k : aucun nouveau calcul de visibilité.
+
+## Limites connues
+
+- Végétation non séparée des autres objets de classe 1 (poteaux, véhicules, clôtures).
+- Une seule date d'acquisition (automne, sans feuilles).
+- Référence verticale CGVD28, non inscrite dans les fichiers LAS : à surveiller si d'autres sources sont
+  ajoutées (CGVD2013).
+- Coûts des capteurs en unités relatives, non calibrés sur des prix réels.
+- **Résolution de 1 m** : la géométrie sous le pixel (bords de toits, cimes) n'est pas représentée. Le modèle
+  en prismes en est une borne conservative.
+- **Végétation** : couche homogène du sol au sommet (pas de base de houppier), angles de feuilles supposés
+  sphériques (G = 0,5), angle de scan du LiDAR non corrigé, bruit binomial d'environ ±0,09 sur P_gap par
+  pixel. Acquisition sans feuilles : transmittances optimistes pour l'été.
+- **La semi-transparence n'est validée que par des tests analytiques** : aucune mesure de terrain (par
+  exemple, des photos prises depuis un point de vue connu) ne la confirme encore.
+- **P_det = T × P_capteur suppose l'indépendance** entre la fraction visible de la cible et sa
+  détectabilité.
+- **Radar** : α_r = 0,3 est une hypothèse ; fouillis (clutter), trajets multiples et Doppler sont ignorés.
+- **Caméra** : conditions de jour et contraste idéal ; les critères DORI sont conçus pour des opérateurs
+  humains.
+- **32 couples** (mât sous la surface du MNS) ne peuvent pas être validés contre un outil 2,5D.
+- **Indépendance des détections** entre capteurs : les corrélations réelles (brouillard, intrus qui rampe)
+  rendent 1 − Π(1 − P) optimiste. La vraie valeur se situe entre max P et 1 − Π(1 − P).
+- **Visibilité statique** : ni végétation saisonnière, ni véhicules stationnés.
+- **Intrus** : omniscient, debout, à vitesse constante ; ramper (silhouette et vitesse réduites) est hors
+  modèle. Pas de capteur de clôture.
+- **Détection n'est pas interruption** : on ne vérifie pas que la détection arrive assez tôt pour que la
+  réponse intervienne avant l'atteinte de la cible (modèle EASI).
+- **Toute détection dans la bande extérieure compte**, alors que sur une voie publique les fausses alarmes
+  conduisent souvent à désactiver l'analyse. La largeur de 30 m n'a pas encore été soumise à l'analyse de
+  sensibilité.
+- **τ_obs, temps de franchissement et π sont des hypothèses** ; l'exposition en dépend fortement, p\* non.
+- **NSGA-II non convergé** à 20 000 évaluations (l'hypervolume monte encore) et amorcé par les solutions de
+  la semaine 3 : le front est une approximation, encadrée par la borne certifiée sur (coût, F).
+- **p\* est constant par paliers** : la sélection de NSGA-II manque de signal entre deux solutions de même p\*.
+- **Pondération par m²** : Bat.3 porte 67 % de l'objectif et oriente toutes les solutions.
+- **Certification incomplète au-delà de B = 18** : l'écart reste entre 1 et 2,8 % dans la limite de 15 min
+  par budget.
+- **Modèle de substitution évalué sur une seule zone** d'environ 1 km², sans feuilles ; les disques de test
+  chevauchent du terrain vu à l'entraînement.
+- **Cible géométrique à α = 1** (caméra) : elle note moins bien les radars (corrélation de 0,69 contre 0,82
+  avec la couverture pondérée).
+- **Score pondéré** : il suppose la visibilité et le poids indépendants à l'intérieur d'un bin (45° × 50 ou
+  100 m).
+- **Sélection des K meilleures positions une par une** : elle ignore la redondance entre positions. C'est une
+  limite de méthode, pas de modèle (§8.9).
+- **Statistique limitée en 6.3** : une graine de NSGA-II, 5 tirages aléatoires ; catalogues réduits évalués
+  au glouton seulement.
+- **U-Net physique non convergé** à 3 000 itérations (la validation baisse encore).
+- **Temps de réponse déterministe** : EASI simplifié, sans distribution de T_R ni probabilité de
+  communication de l'alarme.
+- **Optimum certifié sous fusion max** : sous indépendance, seul un encadrement est obtenu dans la limite de
+  10 min par cas.
+- **Prix de la robustesse encadré seulement** au-delà de B = 16 (limite de 30 min par cas sur 2 cœurs).
+- **Sensibilité un facteur à la fois** : les interactions (course et feuillage, par exemple) ne sont pas
+  explorées.
+- **Feuillage uniforme** (α × f pour toute la végétation, conifères compris) : pessimiste ; pas de données
+  LiDAR feuillées pour le calibrer.
+- **Modèles scikit-learn picklés** (`b2.joblib`) : ils ne se rechargent qu'avec la version qui les a écrits ;
+  à régénérer par `python -m src.baselines_surrogate`.
+
+## Prochaines étapes
+
+**Suite directe de la semaine 7**
+- **Décision robuste multi-scénarios** : un seul dispositif qui tient dans tous les scénarios plausibles
+  (nominal, feuillage × 2, course, bande 15 m). La boucle s'y prête directement : un oracle d'intrus par
+  scénario, les coupes de tous les scénarios dans un même maître.
+- **Retard dans l'optimisation** : donner un coût au renforcement de la clôture et des portails, et optimiser
+  capteurs et retard ensemble.
+
+**Perspectives issues des semaines 5–6**
+- **Mettre le modèle de substitution dans la boucle d'un optimiseur d'ensemble** : sélection gloutonne sur
+  les gains marginaux, avec un modèle qui prédit *quelles* cellules une position voit (et pas seulement des
+  sommes par bin).
+- **Un second site de plusieurs km²**, où le point d'équilibre du réseau est atteint et où les positions
+  candidates deviennent rares.
+- **Généralisation** d'un site à l'autre, et à la saison feuillée.
+
+**Questions ouvertes (semaine 4)**
+- **NSGA-II plus long** (500 générations) ou sans amorçage.
+- **Option `objectif_nsga: "melange"`** du bloc `intrus` : prévue dans la formulation, pas encore branchée.
+
+---
+
+*Données : © Gouvernement du Québec, MRNF, licence CC BY 4.0.*
