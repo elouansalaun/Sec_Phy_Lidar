@@ -21,9 +21,10 @@ Le problème est traité comme un **problème de couverture maximale (MCLP)** so
 7. [Semaine 3 — Optimisation : glouton et optimum certifié](#semaine-3--optimisation--glouton-et-optimum-certifié)
 8. [Semaine 4 — L'intrus : pire chemin et optimisation multi-objectif](#semaine-4--lintrus--pire-chemin-et-optimisation-multi-objectif)
 9. [Semaines 5–6 — Modèle de substitution : carte de potentiel d'implantation](#semaines-56--modèle-de-substitution--carte-de-potentiel-dimplantation)
-10. [Choix méthodologiques](#choix-méthodologiques)
-11. [Limites connues](#limites-connues)
-12. [Prochaines étapes](#prochaines-étapes)
+10. [Semaine 7 — Détection opportune et boucle adversariale exacte](#semaine-7--détection-opportune-et-boucle-adversariale-exacte)
+11. [Choix méthodologiques](#choix-méthodologiques)
+12. [Limites connues](#limites-connues)
+13. [Prochaines étapes](#prochaines-étapes)
 
 ---
 
@@ -55,7 +56,7 @@ coûts de support partagés), optimum certifié par décomposition en coupes sou
 | 3 | Formulation, glouton, optimum certifié (coupes sous-modulaires), front couverture/budget, cartes | ✅ |
 | 4 | Intrus : domaine étendu, pire chemin (p\* et exposition), solutions S3 face à l'intrus, NSGA-II coût/couverture/pire cas | ✅ |
 | 5–6 | Modèle de substitution : carte de potentiel (total viewshed), références B0–B2, U-Net brut et physique, pyramide log-polaire, validation par la décision (protocole préenregistré) | ✅ |
-| 7 | Boucle adversariale optimiseur ↔ intrus, analyse de sensibilité | |
+| 7 | Détection opportune (EASI), boucle adversariale exacte par génération de chemins, coût minimal robuste certifié, prix de la robustesse ; analyse de sensibilité à venir | 🟡 |
 | 8 | Démo Streamlit, article | |
 
 ## Données
@@ -120,6 +121,8 @@ python -m src.surrogate entrainer   # 21. U-Net brut (MPS, ≈ 20 min), puis `ev
 python -m src.surrogate_physique entrainer   # 22. U-Net physique (≈ 23 min), puis `evaluer`
 python -m src.catalogue_surrogate   # 23. validation par la décision, 6 catalogues (≈ 8 min)
 python -m src.catalogue_reduit      # 24. catalogues réduits, protocole préenregistré (≈ 2 min)
+python -m src.opportune             # 25. détection opportune : temps restant, p̃*(T_R) (≈ 10 s)
+python -m src.boucle                # 26. boucle adversariale : c(θ, T_R) certifié, prix de la robustesse (≈ 4 h sur 2 cœurs)
 ```
 
 ```
@@ -150,7 +153,9 @@ python -m src.catalogue_reduit      # 24. catalogues réduits, protocole préenr
 │   ├── horizons.py             horizons denses par pyramide log-polaire
 │   ├── surrogate_physique.py   U-Net conditionnel en h, horizons en entrée
 │   ├── catalogue_surrogate.py  validation par la décision : catalogues, score géométrique ou pondéré
-│   └── catalogue_reduit.py     catalogues réduits, protocole préenregistré
+│   ├── catalogue_reduit.py     catalogues réduits, protocole préenregistré
+│   ├── opportune.py            détection opportune (EASI) : temps restant, p̃*, plafond
+│   └── boucle.py               boucle adversariale exacte : maître ↔ intrus par génération de chemins
 ├── tests/
 │   ├── test_viewshed.py        solutions analytiques du moteur de visibilité
 │   ├── test_sensors.py         propriétés des modèles de capteurs, contrôle de configuration
@@ -160,9 +165,11 @@ python -m src.catalogue_reduit      # 24. catalogues réduits, protocole préenr
 │   ├── test_intrus.py          p*, exposition, invariance à la résolution, profils
 │   ├── test_surrogate_data.py  noyau contre moteur exact, symétries D4, monotonie, découpage
 │   ├── test_surrogate_model.py champ récepteur, équivariance, augmentation exacte
-│   └── test_horizons.py        pyramide : blocs unitaires = exact, pavage, équivariance
+│   ├── test_horizons.py        pyramide : blocs unitaires = exact, pavage, équivariance
+│   ├── test_opportune.py       temps restant exact, T_R = 0, proposition T_R > T_min, encadrement
+│   └── test_boucle.py          coût minimal contre énumération exhaustive, deux fusions, réservoir
 ├── docs/
-│   └── formulation.md          formulation mathématique et preuves (semaines 3 à 6)
+│   └── formulation.md          formulation mathématique et preuves (semaines 3 à 7)
 ├── figures/                    figures versionnées reprises dans ce README
 └── data/
     ├── raw/                    tuiles LAZ (non versionnées)
@@ -1034,6 +1041,139 @@ Le test définitif a donc été **préenregistré** : espacement fixé par une r
 
 ---
 
+## Semaine 7 — Détection opportune et boucle adversariale exacte
+
+La semaine 4 mesurait si l'intrus est détecté. Cette semaine demande s'il l'est **à temps**, puis construit
+la boucle « l'optimiseur place, l'intrus trouve la faille, l'optimiseur corrige » sous une forme qui converge
+et certifie son résultat. La formulation et les preuves sont dans la §9 de [`docs/formulation.md`](docs/formulation.md).
+
+### 1. Détection opportune (`src/opportune.py`)
+
+Une détection ne sert que si la réponse arrive avant que l'intrus atteigne la cible (modèle EASI, Garcia
+2007). On note d(v) le temps minimal de v jusqu'à la cible, clôture comprise. **d ne dépend pas des
+capteurs** : un seul Dijkstra depuis les cibles suffit. Une détection en v compte si d(v) ≥ T_R, le temps de
+réponse, d'où une détection opportune garantie p̃\*. C'est une borne inférieure prouvée, dont on mesure
+l'écart à la valeur exacte le long du couloir : **cet écart est nul** sur le site.
+
+![Temps restant jusqu'à la cible](figures/temps_restant.png)
+
+| Profil | T_min | Médiane depuis les départs | Chemin le plus rapide |
+|---|---|---|---|
+| Déterminé (F) | **30,3 s** | 58 s | 30 m tout droit au sud, escalade, contact immédiat avec le coin de Bat.3 |
+| Opportuniste (G) | **33,0 s** | 65 s | portail 2 : 23,6 s dehors, 9,4 s dedans |
+
+**Proposition** (démontrée en §9.1) : si T_R > T_min, alors p̃\* = 0 **pour tout dispositif**. Une réponse
+réelle prend plusieurs minutes. Sur ce site, la protection passe donc par le **retard** (clôture) ou par une
+**détection plus lointaine**, pas par des capteurs supplémentaires.
+
+| Solution du front (meilleur p\*_F à coût ≤ B) | T_R = 0 | 10 s | 20 s | 30 s |
+|---|---|---|---|---|
+| B = 13, profil F | 0,965 | **0** | 0 | 0 |
+| B = 20, profil F | 1,000 | 0,098 | 0 | 0 |
+| B = 30, profil F | 1,000 | 0,997 | 0 | 0 |
+| Catalogue complet (plafond), profil F | 1 | 1 | 1 | 1 |
+
+![Détection opportune en fonction du temps de réponse](figures/opportune.png)
+
+**Le « p\*_F ≥ 0,95 » de la semaine 4 était presque entièrement tardif.** À B = 13, p̃\*_F tombe sous 0,5
+dès T_R = 2,5 s : l'intrus n'est vu qu'au contact du bâtiment. Le catalogue, lui, permet une détection
+opportune certaine jusqu'à T_min. La faille ne vient pas des capteurs disponibles, mais de l'objectif
+optimisé.
+
+### 2. La boucle adversariale exacte (`src/boucle.py`)
+
+**Linéarisation.** Avec s_vj = −ln(1 − P_vj), la condition P_v ≥ θ devient Σ_j C_vj x_j ≥ 1, où
+C_vj = min(s_vj / s_θ, 1). « Aucun couloir sous θ » devient : tout chemin contient un nœud utile atteignant θ.
+
+| Rôle | Contenu |
+|---|---|
+| **Maître** (MILP, HiGHS) | coût minimal sous (C2)–(C4) et sous les coupes des couloirs connus |
+| **Intrus** (oracle) | union-find de la semaine 4 sur la solution du maître ; renvoie 20 couloirs ouverts |
+| **Arrêt** | l'intrus ne trouve plus de couloir, et le maître prouve que rien de moins cher n'existe |
+
+La boucle naïve (pénaliser le dernier couloir) peut osciller. Celle-ci est une **génération de contraintes** :
+le maître est une relaxation, donc sa borne est valide à chaque itération, et la boucle termine
+(proposition 3).
+
+**Rendre la boucle praticable** (4 151 configurations, 27 905 nœuds). Chaque choix est exact et documenté en
+§9.2.
+
+| Obstacle mesuré | Réponse |
+|---|---|
+| Borne bloquée à 2,7 pour un optimum de 12,8 : la liaison z ≤ Σ C x est faible en relaxation | **coupe agrégée en x**, Σ_j max_{v∈γ} C_vj x_j ≥ 1 ; les variables z ne sont créées que si l'intrus exploite des capteurs partiels |
+| Maître encore lent sous l'hypothèse d'indépendance (coefficients fractionnaires) | résolution exacte sous la **fusion max** (P_v = max_j P_vj) : couverture d'ensembles pure, dont la solution reste valide sous indépendance |
+| Chaque cas repart de zéro | **réservoir de couloirs** partagé : tout couloir donne une coupe valide pour tout (θ, T_R) |
+| Le maître prouve lentement son optimalité | **coupure** par la meilleure solution connue, coûts en multiples de 0,1 ; l'infaisabilité du maître prouve l'optimalité |
+| 30 à 60 % de configurations inutiles | retrait des configurations **vides** ou **dominées** (même support, ensemble couvert inclus) |
+
+**Validation.** Sur 36 instances jouets (clôture, portail, (C3), (C4)), l'optimum est égal à celui d'une
+**énumération exhaustive** des 2⁷ dispositifs, sous les deux fusions. Chaque solution du site est revérifiée
+par `src.intrus`, indépendamment des coefficients C.
+
+### 3. Coût minimal d'une détection opportune garantie
+
+Profil déterminé, fusion max. Tous les cas sont **certifiés optimaux** (entre 47 s et 19 min par cas).
+
+| θ \ T_R | 0 | 10 s | 20 s | 30 s |
+|---|---|---|---|---|
+| 0,5 | **10,4** (front : 12,8) | **10,6** (20,2) | **11,3** (28,6) | **11,3** (29,0) |
+| 0,9 | **12,8** (12,8) | **13,5** (22,0) | **15,4** (28,6) | **15,4** (aucun) |
+| 0,95 | **12,8** (12,8) | **14,4** (22,0) | **17,3** (28,6) | **17,8** (aucun) |
+
+Entre parenthèses : le coût du point le moins cher du front NSGA-II de la semaine 4 qui satisfait la même
+exigence.
+
+![Coût minimal robuste](figures/cout_robuste.png)
+
+1. **Le seuil de 12,8 unités de la semaine 4 est prouvé.** Deux radars sur mâts intérieurs sont l'optimum pour
+   θ = 0,9 et θ = 0,95 à T_R = 0. NSGA-II l'avait trouvé, sans pouvoir le prouver.
+2. **Détecter à temps coûte peu, à condition de le demander.** Garantir 0,9 à T_R = 20 s coûte 15,4, contre
+   28,6 pour le front, qui n'optimisait pas ce critère. Le coût supplémentaire par rapport à T_R = 0 est de
+   2,6 unités.
+3. **La géométrie de la solution change avec T_R.** À T_R = 0 : 2 radars. À T_R = 10 s : 1 radar et 3
+   caméras. À T_R = 20 s : 1 radar et 5 caméras, dont le F n'est plus que de 7 %. Détecter tôt, c'est
+   **regarder dehors**, là où le poids de la couverture est nul.
+4. **Sous l'hypothèse d'indépendance, l'optimum est encadré** (θ = 0,9, 10 min par cas) : [10,5 ; 12,8] à
+   T_R = 0, [11,3 ; 13,5] à 10 s, [11,9 ; 15,4] à 20 s et [14,1 ; 15,4] à 30 s. La borne haute est chaque fois
+   l'optimum de la fusion max : aucune combinaison de capteurs partiels moins chère n'a été trouvée.
+   Dimensionner sous la fusion max est prudent, puisque ses solutions restent valides si les détections sont
+   corrélées (brouillard, intrus qui rampe).
+
+![Convergence de la boucle](figures/boucle_convergence.png)
+
+### 4. Prix de la robustesse certifié
+
+Couverture maximale à budget donné, avec ou sans la contrainte p̃\*_F ≥ θ. On utilise les coupes
+sous-modulaires de la semaine 3, auxquelles s'ajoutent les coupes de couloirs. Chaque F est encadré.
+
+| B | Exigence | F sans exigence | F avec exigence | Prix | Dispositif robuste |
+|---|---|---|---|---|---|
+| 16 | θ = 0,95, T_R = 0 | [84,9 ; 85,3] % | [84,7 ; 84,7] % | **[0,13 ; 0,61] pt** | 2 radars, 2 caméras |
+| 19 | θ = 0,95, T_R = 0 | [86,6 ; 89,5] % | [86,2 ; 88,5] % | [0 ; 3,3] pt | 3 radars |
+| 20 | θ = 0,9, T_R = 10 s | [87,9 ; 90,4] % | [85,2 ; 88,9] % | [0 ; 5,1] pt | 3 radars, 1 caméra |
+| 30 | θ = 0,9, T_R = 20 s | [93,8 ; 95,3] % | [93,4 ; 95,3] % | **[0 ; 1,9] pt** | 4 radars, 2 caméras |
+
+- À B = 16, l'encadrement certifié [0,13 ; 0,61] contient l'estimation de NSGA-II (0,17 point).
+- **À B = 30, la détection opportune garantie passe de 0 à 0,986** (T_R = 20 s) pour au plus 1,9 point de
+  couverture. Ce qui semblait un compromis entre regarder dehors et couvrir dedans disparaît dès que le
+  budget permet un radar de plus.
+- Les encadrements larges (B = 19, 20) viennent de la limite de 30 min par cas sur 2 cœurs, pas de la méthode.
+
+### 5. Ce qu'il faut retenir de la semaine 7
+
+1. **Détecter n'est pas interrompre.** Au-delà de T_min ≈ 30 s de temps de réponse, aucun capteur ne protège
+   Bat.3 : c'est une propriété du site, démontrée, pas un défaut de l'optimisation.
+2. **Un optimum mono-critère cache ses failles, même quand il est robuste.** Le p\* ≥ 0,95 de la semaine 4
+   reposait sur une détection au contact du bâtiment.
+3. **La boucle optimiseur ↔ intrus peut être exacte.** Écrite comme une génération de contraintes, elle
+   termine et certifie : le seuil de 12,8 unités est prouvé.
+4. **L'exigence doit figurer dans l'objectif.** Demandée explicitement, la détection opportune coûte 15,4 au
+   lieu de 28,6, et à B = 30 elle ne coûte presque rien en couverture.
+5. **Chaque accélération a été choisie sur une mesure** (borne bloquée, maître lent, configurations vides) et
+   reste exacte ; la force brute la valide.
+
+---
+
 ## Choix méthodologiques
 
 **Organisation**
@@ -1151,6 +1291,20 @@ Le test définitif a donc été **préenregistré** : espacement fixé par une r
 50. **Protocole préenregistré** (règle d'espacement, critère de succès) après un premier résultat obtenu par
     réglage a posteriori ; son échec est publié tel quel.
 
+**Détection opportune et boucle adversariale (semaine 7)**
+51. **Temps restant indépendant des capteurs** : d(v) est calculé une fois ; le masque d(v) ≥ T_R donne une
+    borne inférieure prouvée, dont l'écart à la valeur le long du couloir est mesuré (nul sur le site).
+52. **Plafond du catalogue** (toutes les configurations actives) : il sépare ce qui est physiquement
+    impossible de ce que l'optimiseur n'a pas cherché.
+53. **Génération de contraintes plutôt que boucle naïve** : l'intrus est l'oracle de séparation, la borne du
+    maître est valide à chaque itération.
+54. **Coupe agrégée en x, z seulement à la demande** : choisie après avoir mesuré une borne bloquée à 2,7
+    pour un optimum de 12,8.
+55. **Fusion max pour l'optimum certifié, fusion produit en encadrement** : la première est exacte et
+    rapide, et ses solutions restent valides sous la seconde.
+56. **Réservoir de couloirs, coupure par l'incumbent, retrait des configurations dominées** : trois
+    accélérations exactes, validées par énumération exhaustive sur instances jouets.
+
 ## Limites connues
 
 - Végétation non séparée des autres objets de classe 1 (poteaux, véhicules, clôtures).
@@ -1199,16 +1353,20 @@ Le test définitif a donc été **préenregistré** : espacement fixé par une r
 - **Statistique limitée en 6.3** : une graine de NSGA-II, 5 tirages aléatoires ; catalogues réduits évalués
   au glouton seulement.
 - **U-Net physique non convergé** à 3 000 itérations (la validation baisse encore).
+- **Temps de réponse déterministe** : EASI simplifié, sans distribution de T_R ni probabilité de
+  communication de l'alarme.
+- **Optimum certifié sous fusion max** : sous indépendance, seul un encadrement est obtenu dans la limite de
+  10 min par cas.
+- **Prix de la robustesse encadré seulement** au-delà de B = 16 (limite de 30 min par cas sur 2 cœurs).
 - **Modèles scikit-learn picklés** (`b2.joblib`) : ils ne se rechargent qu'avec la version qui les a écrits ;
   à régénérer par `python -m src.baselines_surrogate`.
 
 ## Prochaines étapes
 
-**Semaine 7 — Boucle adversariale et sensibilité**
-- **Détection opportune (EASI)**, et boucle adversariale exacte par interdiction de plus court chemin
-  (Israeli et Wood, 2002), l'exposition étant linéaire en x.
-- **Sensibilité** : largeur de la bande extérieure, τ_obs, pondération par actif plutôt que par m²,
-  indépendance des détections (max P contre 1 − Π(1 − P)), saison feuillée.
+**Semaine 7 — suite : analyse de sensibilité (7.3)**
+- Mesurée par le **regret de décision** : f_perturbé(x\*_perturbé) − f_perturbé(x\*_nominal).
+- Paramètres : largeur de la bande b, temps d'escalade t_c (levier de retard), T_R, τ_obs, fusion
+  (max contre produit), pondération par actif, saison feuillée (k → f·k, soit T → T^f).
 
 **Perspectives issues des semaines 5–6**
 - **Mettre le modèle de substitution dans la boucle d'un optimiseur d'ensemble** : sélection gloutonne sur

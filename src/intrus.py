@@ -155,11 +155,15 @@ def seuil_couloir(dom: Domaine, P: np.ndarray, profil: str) -> tuple[float, np.n
 # =============================================================================
 # Étape 4 — Exposition Λ* : Dijkstra multi-source
 # =============================================================================
-def poids_exposition(dom: Domaine, sigma: np.ndarray, ic: dict, tau_obs: float) -> np.ndarray:
+def temps_aretes(dom: Domaine, ic: dict) -> np.ndarray:
+    """Temps de parcours de chaque arête (s) : marche ℓ/v + temps de franchissement t_×."""
     t_x = np.where(dom.portail >= 0, ic["t_portail_s"],
                    np.where(dom.franchit, ic["t_cloture_s"], 0.0))
-    temps = dom.longueur / ic["vitesse_m_s"] + t_x
-    return 0.5 * (sigma[dom.u] + sigma[dom.v]) * temps / tau_obs
+    return dom.longueur / ic["vitesse_m_s"] + t_x
+
+
+def poids_exposition(dom: Domaine, sigma: np.ndarray, ic: dict, tau_obs: float) -> np.ndarray:
+    return 0.5 * (sigma[dom.u] + sigma[dom.v]) * temps_aretes(dom, ic) / tau_obs
 
 
 def exposition(dom: Domaine, sigma: np.ndarray, profil: str, ic: dict,

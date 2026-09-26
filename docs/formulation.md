@@ -554,6 +554,108 @@ Le résultat encourageant du point 3 était donc un **faux positif** : un régla
 | Équivariance D4 des horizons | rotation de 90° du terrain = secteurs décalés de $+2$ |
 | `transformer` | identique à `surrogate.d4` sur les étiquettes |
 
+## 9. Boucle adversariale et sensibilité (semaine 7)
+
+### 9.1 Détection opportune (`src/opportune.py`)
+
+Une détection ne sert que si la réponse arrive avant que l'intrus atteigne la cible (modèle EASI, Garcia 2007). On suppose un temps de réponse déterministe $T_R$ : une détection en $v$ est **opportune** si le temps qu'il reste à l'intrus pour atteindre $V_t$ est au moins $T_R$.
+
+**Temps restant.** Avec $t_e = \ell_e / v + t_\times(e)$ (§7.5), on pose
+
+$$
+d(v) = \min_{\gamma : v \to V_t} \sum_{e \in \gamma} t_e .
+$$
+
+$d$ **ne dépend pas des capteurs** : un seul Dijkstra multi-source depuis $V_t$, par profil (le graphe et les temps sont symétriques). $d_\mathcal{F} \le d_\mathcal{G}$, puisque $\mathcal{G}$ a moins d'arêtes.
+
+**Métrique masquée.** $\tilde P_v = P_v \cdot \mathbb{1}[d(v) \ge T_R]$ et $\tilde p^\star = p^\star(\tilde P)$ ; de même $\tilde\sigma$ et $\tilde\Lambda^\star$.
+
+**Proposition 1 (borne inférieure).** $\tilde p^\star$ minore la détection opportune garantie.
+
+*Preuve.* Sur un chemin $\gamma$, le temps réellement restant en $u$ est $r_\gamma(u) \ge d(u)$. Donc $\{u : d(u) \ge T_R\} \subseteq \{u : r_\gamma(u) \ge T_R\}$, et pour tout $\gamma$, $\max_{u \in \gamma} \tilde P_u \le \max_{u \in \gamma,\, r_\gamma(u) \ge T_R} P_u$. On conclut en prenant le minimum sur $\gamma$, puis par l'argument de la §7.4. ∎
+
+**Borne supérieure.** La détection opportune réelle d'un chemin réalisable majore le minimum. On l'évalue, avec $r_\gamma$ calculé le long du chemin, sur deux couloirs de $G_{\tilde p^\star}$ : le plus court en mètres et le plus rapide. Sur le site, l'écart entre les deux bornes est **nul** pour toutes les solutions et tous les $T_R$ testés.
+
+**Proposition 2 (temps d'intrusion minimal).** Soit $T_\text{min} = \min_{s \in V_s} d(s)$. Si $T_R > T_\text{min}$, alors $\tilde p^\star = 0$ pour **tout** dispositif.
+
+*Preuve.* Le long du chemin le plus rapide issu du départ qui réalise $T_\text{min}$, $d$ décroît ; tous ses nœuds vérifient $d(u) \le T_\text{min} < T_R$, donc $\tilde P_u = 0$. ∎
+
+Au-delà de $T_\text{min}$, aucun placement de capteurs ne peut protéger : les seuls leviers sont le **retard** ($t_\text{c}$), la **détection plus lointaine** ($b$) ou la **réponse** ($T_R$).
+
+**Plafond du catalogue.** $P$ croît avec l'ensemble des capteurs actifs : toutes les configurations actives majorent tout dispositif réalisable. Ce plafond sépare ce qui est physiquement impossible avec le catalogue de ce que les solutions n'ont simplement pas cherché à faire.
+
+| Test (`tests/test_opportune.py`) | Référence |
+|---|---|
+| Ligne droite, avec clôture ou portail | $d = L/v$, $+ t_\text{c}$ ou $+ t_\text{p}$ |
+| Clôture sans portail, profil $\mathcal{G}$ | $d = \infty$ à l'extérieur |
+| Chemin le plus rapide | $r_\gamma = d$ exactement |
+| Détection à 1 s de la cible | comptée si $T_R < 1$ s, ignorée sinon |
+| $T_R = 0$ | $\tilde p^\star = p^\star$ |
+| $T_R > T_\text{min}$ | $\tilde p^\star = 0$ (proposition 2) |
+| 20 instances aléatoires | $\tilde p^\star$ décroissant en $T_R$ ; $\tilde p^\star \le$ borne supérieure ; $d_\mathcal{F} \le d_\mathcal{G}$ |
+| Plafond | égal à `detection` avec toutes les configurations |
+
+### 9.2 Boucle adversariale exacte (`src/boucle.py`)
+
+**Problème.** Trouver le dispositif de coût minimal dont la détection opportune garantie vaut au moins $\theta$ contre le profil $\mathcal{F}$ :
+
+$$
+c(\theta, T_R) = \min \Big\{ \textstyle\sum_j a_j x_j + \sum_s f_s y_s \ : \ \text{(C2)–(C4)},\ \tilde p^\star_\mathcal{F}(x) \ge \theta \Big\}.
+$$
+
+**Linéarisation du seuil.** Avec $s_{vj} = -\ln(1 - P_{vj})$ et $s_\theta = -\ln(1 - \theta)$, sous l'hypothèse d'indépendance de la §3.1 :
+
+$$
+P_v(x) \ge \theta \iff \sum_j s_{vj} x_j \ge s_\theta \iff \sum_j C_{vj} x_j \ge 1, \qquad C_{vj} = \min(s_{vj}/s_\theta,\ 1).
+$$
+
+La troncature est exacte : si un terme vaut 1, les deux membres sont vrais. Elle élimine $s_{vj} = \infty$ ($P_{vj} = 1$) et resserre la relaxation continue.
+
+**Du couloir aux coupes.** $\tilde p^\star(x) \ge \theta$ si et seulement si tout chemin $\gamma$ des départs vers la cible contient un nœud $v$ tel que $d(v) \ge T_R$ et $P_v(x) \ge \theta$. Avec $z_v \in \{0,1\}$ et $z_v \le \sum_j C_{vj} x_j$ :
+
+$$
+\sum_{v \in \gamma,\ d(v) \ge T_R} z_v \ \ge\ 1 \qquad \forall \gamma.
+$$
+
+Les chemins sont en nombre exponentiel : on les génère à la demande.
+
+- **Maître** : (C2)–(C4), les liaisons $z$–$x$ et les coupes des chemins connus. Une variable $z_v$ n'existe que si $v$ appartient à une coupe : ailleurs, fixer $z_v = 0$ ne change rien.
+- **Intrus (oracle)** : l'union-find de la §7.4 sur $u_v = \min(\sum_j C_{vj} \hat x_j, 1)$, avec $u_v$ mis à 0 là où $d(v) < T_R$. S'il existe un couloir où $u < 1$, il devient une coupe. Vingt couloirs par itération, chacun évitant les nœuds utiles des précédents.
+
+**Proposition 3 (validité et terminaison).** Le maître est une relaxation : sa borne minore $c(\theta, T_R)$ à chaque itération. Les chemins simples sont en nombre fini et un chemin déjà coupé ne peut être renvoyé, donc la boucle termine. Quand l'intrus ne trouve plus de couloir, la solution est réalisable, donc optimale. ∎
+
+C'est la boucle « l'optimiseur place, l'intrus trouve la faille, l'optimiseur corrige » de la description du projet. La version naïve, qui pénalise le dernier couloir trouvé, peut osciller ; celle-ci converge et certifie son résultat.
+
+**Coupe agrégée en $x$.** Pour tout chemin $\gamma$, $\sum_j \big(\max_{v \in \gamma} C_{vj}\big) x_j \ge 1$ est valide : si un nœud de $\gamma$ atteint $\theta$, la somme vaut au moins sa propre somme. En relaxation continue, elle domine $\sum_v \sum_j C_{vj} x_j \ge 1$, que les $z$ impliquent. On l'ajoute toujours. La coupe exacte en $z$ n'est créée que si $\hat x$ satisfait la coupe en $x$ alors que le couloir reste ouvert, c'est-à-dire quand l'intrus exploite des capteurs partiels qui ne se combinent pas au même endroit.
+
+**Deux hypothèses de fusion.**
+
+| Fusion | $P_v$ | $C_{vj}$ | Coupe en $x$ | Résolution |
+|---|---|---|---|---|
+| Indépendance (produit) | $1 - \prod_j (1 - P_{vj})$ | $\min(s_{vj}/s_\theta, 1)$ | relaxation | encadrement dans la limite de temps |
+| Corrélation totale (max) | $\max_j P_{vj}$ | $\mathbb{1}[P_{vj} \ge \theta]$ | **exacte** (pas de $z$) | couverture d'ensembles, optimum certifié |
+
+Comme $1 - \prod_j (1 - P_{vj}) \ge \max_j P_{vj}$, un dispositif valide sous « max » l'est aussi sous « produit » :
+
+$$
+\underline{c}_\text{produit} \ \le\ c_\text{produit}(\theta, T_R) \ \le\ c_\text{max}(\theta, T_R).
+$$
+
+La fusion « max » est aussi la borne pessimiste de la §3.3 (détections corrélées : brouillard, intrus qui rampe). Dimensionner avec elle est prudent.
+
+**Accélérations, toutes exactes.**
+1. **Réservoir de couloirs partagé.** Tout chemin départ → cible donne une coupe valide pour tout $(\theta, T_R)$, après intersection avec les nœuds utiles du cas. Les cas sont résolus par $(\theta, T_R)$ croissants, et chacun hérite des couloirs des précédents.
+2. **Configurations inutiles** (coût minimal seulement). Une configuration sans coefficient sur un nœud utile ne sert à aucune coupe et coûte : elle est retirée. En fusion « max », une configuration dont l'ensemble couvert est inclus dans celui d'une autre, sur le même support, du même type et au coût capteur inférieur ou égal, est aussi retirée (on peut toujours l'échanger contre sa dominante). En fusion « produit », les contributions s'additionnent et l'argument ne tient pas.
+3. **Coupure par l'incumbent.** Les coûts sont des multiples de $q = 0{,}1$. On impose au maître un coût $\le c^{\text{inc}} - q/2$, avec l'objectif en multiples de $q$. S'il devient irréalisable, l'incumbent est optimal. Le maître peut alors s'arrêter à 5 % d'écart : l'exactitude vient de la preuve d'infaisabilité, pas de son optimalité.
+4. **Amorçage.** Les 175 solutions du front NSGA-II fournissent des coupes (trois couloirs chacune, coupes en $x$ seulement) et l'incumbent initial.
+
+| Test (`tests/test_boucle.py`) | Référence |
+|---|---|
+| $\min(\sum_{j \in T} C_{vj}, 1) = 1 \iff P_v \ge \theta$ | 40 tirages, deux fusions, trois $\theta$ |
+| Coût minimal sur 36 instances jouets (7 configurations, clôture, portail, (C3), (C4)) | **énumération exhaustive** des $2^7$ dispositifs, deux fusions, $T_R \in \{0, 6\}$ s |
+| Réservoir hérité d'un autre cas | même optimum qu'à froid |
+| Pas des coûts | détecté (0,01 sur les jouets, 0,1 sur le site) |
+
 ## Références
 
 - G. L. Nemhauser, L. A. Wolsey, M. L. Fisher (1978). *An analysis of approximations for maximizing submodular set functions — I.* Mathematical Programming 14, 265–294.

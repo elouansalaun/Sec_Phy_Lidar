@@ -110,6 +110,7 @@ intrus:                          # évaluation par l'intrus (docs/formulation.md
   t_cloture_s: 10.0              # temps d'escalade du grillage de 2,5 m, exposé (hypothèse)
   t_portail_s: 3.0               # temps de passage d'un portail fermé (hypothèse)
   pi_portail: 0.8                # part d'intrus opportunistes (portails seulement) — hypothèse
+  t_reponse_s: [0, 10, 20, 30, 45, 60, 120]   # temps de réponse T_R, détection opportune (§9.1) — hypothèses
   objectif_nsga: "pire_cas"      # "pire_cas" (p*_F) ou "melange" (D_pi), voir §7.3
 
 
@@ -127,6 +128,22 @@ nsga:                            # NSGA-II multi-objectif (src/nsga.py, étape 4
     zones: [4, 5]                # indices de la couche couverture : Gaz Bat.3, Générateur
     contrainte: false            # true : contrainte de NSGA-II ; false : indicateur seulement
 
+
+boucle:                          # boucle adversariale exacte par génération de chemins (§9.2)
+  out_dir: "data/processed/boucle"
+  profil: "F"                    # menace de référence : intrus déterminé
+  theta: [0.5, 0.9, 0.95]        # détection opportune garantie exigée
+  t_reponse_s: [0, 10, 20, 30]   # au-delà de T_min ≈ 30 s : irréalisable (§9.1, proposition 2)
+  theta_produit: [0.9]           # cas où l'on encadre aussi l'optimum sous indépendance
+  chemins_par_iteration: 20      # couloirs disjoints renvoyés par l'intrus à chaque itération
+  temps_maitre_s: 300
+  temps_max_s: 1800              # par cas, fusion « max » (optimum certifié)
+  temps_produit_s: 600           # par cas, fusion « produit » (encadrement)
+  prix:                          # prix de la robustesse certifié : F max libre vs F max robuste
+    - {budget: 16, theta: 0.95, t_reponse_s: 0}
+    - {budget: 19, theta: 0.95, t_reponse_s: 0}
+    - {budget: 20, theta: 0.9, t_reponse_s: 10}
+    - {budget: 30, theta: 0.9, t_reponse_s: 20}
 
 surrogate:                       # modèle de substitution : carte de potentiel (docs/formulation.md, §8)
   out_dir: "data/processed/surrogate"
