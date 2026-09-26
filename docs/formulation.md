@@ -656,6 +656,60 @@ La fusion « max » est aussi la borne pessimiste de la §3.3 (détections corr�
 | Réservoir hérité d'un autre cas | même optimum qu'à froid |
 | Pas des coûts | détecté (0,01 sur les jouets, 0,1 sur le site) |
 
+### 9.3 Analyse de sensibilité par regret de décision (`src/sensibilite.py`)
+
+**Protocole préenregistré** : il est fixé ici, et dans le bloc `sensibilite` de `config.yaml`, avant tout calcul.
+
+**Question.** Les décisions de la §9.2 restent-elles bonnes si une hypothèse est fausse ? Faire varier une métrique ne suffit pas : on mesure ce que coûte de s'être trompé.
+
+**Décisions évaluées.** $D_0$ et $D_{10}$, les optima certifiés (fusion max) pour $\theta = 0{,}9$ et $T_R = 0$ ou 10 s. Une configuration est identifiée par sa clé (emplacement, hauteur, capteur, azimut, inclinaison), ce qui permet de la retrouver quand un scénario reconstruit `A_intrus`.
+
+**Métriques**, pour un scénario $s$ et une décision $D$ calculée sous l'hypothèse nominale :
+
+| Métrique | Définition |
+|---|---|
+| tient | $\tilde p^\star_s(D) \ge \theta$ |
+| $c^\star_s$ | coût minimal certifié sous $s$ (boucle de la §9.2) |
+| regret | $\text{coût}(D) - c^\star_s \ge 0$ si $D$ tient (sur-dimensionnement) |
+| défaillance | si $D$ ne tient pas : surcoût nécessaire $c^\star_s - \text{coût}(D)$, et $\tilde p^\star_s(D)$ atteint |
+| stabilité | indice de Jaccard entre $D$ et $D^\star_s$ |
+
+**Décision stable** : elle tient dans tous les scénarios, avec un regret inférieur à 10 % de son coût.
+
+**Scénarios** (un facteur à la fois autour du nominal) :
+
+| Facteur | Valeurs | Ce qui est recalculé |
+|---|---|---|
+| Retard $(t_\text{c}, t_\text{p})$ | (10, 3)\*, (30, 3), (30, 30), (60, 60), (120, 120) s | $d$ seulement |
+| Vitesse de l'intrus | 1,0 ; 1,5\* ; 3,0 m/s | $d$ seulement |
+| Largeur de bande $b$ | 15 ; 30\* ; 50 m | domaine, graphe, `A_intrus` |
+| Feuillage $f$ | 1\* ; 2 ; 4 | `A_intrus` (α × f pour tous les capteurs) |
+
+\* valeur nominale.
+
+- **Feuillage.** $\tau = \sum k_i \ell_i$ est linéaire en $k$ : multiplier $k$ par $f$ revient à multiplier α par $f$, sans toucher au moteur de visibilité. Appliquer $f$ aussi aux conifères est pessimiste.
+- **Frontière retard–réponse.** Pour chaque $(t_\text{c}, t_\text{p})$, on calcule $T_\text{min}$ et $c^\star(\theta = 0{,}9, T_R)$ pour $T_R \in \{10, 30, 60, 120\}$ s, quand $T_R < T_\text{min}$ (sinon, la proposition 2 donne l'impossibilité).
+- **Sans calcul.** τ_obs et π n'interviennent pas dans $\tilde p^\star_\mathcal{F}$ (§7.4, §7.3). Les décisions de la §9.2 y sont insensibles **par construction**.
+
+**Prédictions, écrites avant le calcul.**
+- H1. Renforcer la clôture seule plafonne $T_\text{min}$ : l'intrus déterminé passe alors par un portail, et (30, 3) donne $T_\text{min} \approx 33$ s, pas 50 s.
+- H2. À la course (3 m/s), $T_\text{min}$ tombe vers 20 s et $D_{10}$ risque de ne plus tenir.
+- H3. Le feuillage pénalise surtout les caméras (α = 1) : $D_0$ (deux radars, α = 0,3) tient à $f = 2$, $D_{10}$ (trois caméras) est plus exposée.
+- H4. La bande touche surtout $D_{10}$, qui détecte à l'extérieur ; $D_0$ détecte près de la cible et y est peu sensible.
+
+**Résultats** (après calcul ; détail dans le README, semaine 7 §6)
+
+| Prédiction | Verdict |
+|---|---|
+| H1 | confirmée : $T_\text{min}$ passe de 30,3 à 33,0 s seulement avec (30, 3) ; 50,3 s avec (30, 30) |
+| H2 | confirmée : $T_\text{min} = 18{,}0$ s, $\tilde p^\star(D_{10}) = 0$ |
+| H3 | **réfutée pour $D_0$** : $\tilde p^\star = 0{,}87$ à $f = 2$. Le radar est atténué à l'aller et au retour, $2 \times 0{,}3 \times f = 1{,}2 > 1$ |
+| H4 | confirmée : bande de 15 m, $\tilde p^\star(D_{10}) = 0{,}66$, $D_0$ intact |
+
+Selon le critère préenregistré, aucune décision n'est stable : $D_0$ tient dans 9 scénarios sur 11, $D_{10}$ dans 7 sur 11. Les surcoûts de réparation vont de 0,4 à 3,1 unités.
+
+**Constat (le retard ne change pas le coût tant que le cas est réalisable).** Un retard plus grand augmente $d(v)$ partout où le chemin le plus rapide franchit la clôture, donc agrandit l'ensemble des nœuds utiles : $c^\star$ ne peut que décroître (c'est une propriété de monotonie). Sur les 18 cas réalisables (retard × $T_R$), il reste constant à $T_R$ donné : 12,8, 13,5 et 15,4 pour $T_R$ = 0, 10 et 30 s. Le retard étend donc le domaine des $T_R$ réalisables sans changer le coût. C'est une observation sur ce site, pas un résultat général.
+
 ## Références
 
 - G. L. Nemhauser, L. A. Wolsey, M. L. Fisher (1978). *An analysis of approximations for maximizing submodular set functions — I.* Mathematical Programming 14, 265–294.

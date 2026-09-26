@@ -145,6 +145,23 @@ boucle:                          # boucle adversariale exacte par génération d
     - {budget: 20, theta: 0.9, t_reponse_s: 10}
     - {budget: 30, theta: 0.9, t_reponse_s: 20}
 
+sensibilite:                     # analyse de sensibilité par regret de décision (§9.3), préenregistrée
+  out_dir: "data/processed/sensibilite"
+  theta: 0.9
+  decisions_t_reponse_s: [0, 10] # décisions nominales : optimum certifié de la boucle (fusion max)
+  seuil_stable: 0.10             # stable : tient partout et regret < 10 % de son coût
+  retard:                        # (t_c, t_p) : escalade de la clôture, passage d'un portail (s)
+    - [10, 3]                    # nominal
+    - [30, 3]                    # clôture renforcée seule
+    - [30, 30]                   # clôture et portails renforcés
+    - [60, 60]
+    - [120, 120]
+  retard_t_reponse_s: [10, 30, 60, 120]
+  vitesse_m_s: [1.0, 3.0]        # nominal 1,5 (marche) ; 3,0 = course
+  bande_ext_m: [15, 50]          # nominal 30 ; reconstruit le domaine et A_intrus
+  feuillage: [2, 4]              # α × f pour tous les capteurs (k × f, feuilles) ; reconstruit A_intrus
+  temps_max_s: 1200              # par résolution
+
 surrogate:                       # modèle de substitution : carte de potentiel (docs/formulation.md, §8)
   out_dir: "data/processed/surrogate"
   rayon_m: 150                   # R : portée utile (R90 du radar, caméra télé ≈ 143 m)

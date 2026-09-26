@@ -21,7 +21,7 @@ Le problème est traité comme un **problème de couverture maximale (MCLP)** so
 7. [Semaine 3 — Optimisation : glouton et optimum certifié](#semaine-3--optimisation--glouton-et-optimum-certifié)
 8. [Semaine 4 — L'intrus : pire chemin et optimisation multi-objectif](#semaine-4--lintrus--pire-chemin-et-optimisation-multi-objectif)
 9. [Semaines 5–6 — Modèle de substitution : carte de potentiel d'implantation](#semaines-56--modèle-de-substitution--carte-de-potentiel-dimplantation)
-10. [Semaine 7 — Détection opportune et boucle adversariale exacte](#semaine-7--détection-opportune-et-boucle-adversariale-exacte)
+10. [Semaine 7 — Détection opportune, boucle adversariale exacte, sensibilité](#semaine-7--détection-opportune-boucle-adversariale-exacte-sensibilité)
 11. [Choix méthodologiques](#choix-méthodologiques)
 12. [Limites connues](#limites-connues)
 13. [Prochaines étapes](#prochaines-étapes)
@@ -56,7 +56,7 @@ coûts de support partagés), optimum certifié par décomposition en coupes sou
 | 3 | Formulation, glouton, optimum certifié (coupes sous-modulaires), front couverture/budget, cartes | ✅ |
 | 4 | Intrus : domaine étendu, pire chemin (p\* et exposition), solutions S3 face à l'intrus, NSGA-II coût/couverture/pire cas | ✅ |
 | 5–6 | Modèle de substitution : carte de potentiel (total viewshed), références B0–B2, U-Net brut et physique, pyramide log-polaire, validation par la décision (protocole préenregistré) | ✅ |
-| 7 | Détection opportune (EASI), boucle adversariale exacte par génération de chemins, coût minimal robuste certifié, prix de la robustesse ; analyse de sensibilité à venir | 🟡 |
+| 7 | Détection opportune (EASI), boucle adversariale exacte par génération de chemins, coût minimal robuste certifié, prix de la robustesse, sensibilité par regret de décision (protocole préenregistré) | ✅ |
 | 8 | Démo Streamlit, article | |
 
 ## Données
@@ -123,6 +123,7 @@ python -m src.catalogue_surrogate   # 23. validation par la décision, 6 catalog
 python -m src.catalogue_reduit      # 24. catalogues réduits, protocole préenregistré (≈ 2 min)
 python -m src.opportune             # 25. détection opportune : temps restant, p̃*(T_R) (≈ 10 s)
 python -m src.boucle                # 26. boucle adversariale : c(θ, T_R) certifié, prix de la robustesse (≈ 4 h sur 2 cœurs)
+python -m src.sensibilite           # 27. sensibilité par regret de décision (≈ 2 h 30 sur 2 cœurs)
 ```
 
 ```
@@ -155,7 +156,8 @@ python -m src.boucle                # 26. boucle adversariale : c(θ, T_R) certi
 │   ├── catalogue_surrogate.py  validation par la décision : catalogues, score géométrique ou pondéré
 │   ├── catalogue_reduit.py     catalogues réduits, protocole préenregistré
 │   ├── opportune.py            détection opportune (EASI) : temps restant, p̃*, plafond
-│   └── boucle.py               boucle adversariale exacte : maître ↔ intrus par génération de chemins
+│   ├── boucle.py               boucle adversariale exacte : maître ↔ intrus par génération de chemins
+│   └── sensibilite.py          regret de décision : retard, vitesse, bande, feuillage
 ├── tests/
 │   ├── test_viewshed.py        solutions analytiques du moteur de visibilité
 │   ├── test_sensors.py         propriétés des modèles de capteurs, contrôle de configuration
@@ -167,7 +169,8 @@ python -m src.boucle                # 26. boucle adversariale : c(θ, T_R) certi
 │   ├── test_surrogate_model.py champ récepteur, équivariance, augmentation exacte
 │   ├── test_horizons.py        pyramide : blocs unitaires = exact, pavage, équivariance
 │   ├── test_opportune.py       temps restant exact, T_R = 0, proposition T_R > T_min, encadrement
-│   └── test_boucle.py          coût minimal contre énumération exhaustive, deux fusions, réservoir
+│   ├── test_boucle.py          coût minimal contre énumération exhaustive, deux fusions, réservoir
+│   └── test_sensibilite.py     feuillage ⇔ α × f, retard plafonné par le portail, clés de configuration
 ├── docs/
 │   └── formulation.md          formulation mathématique et preuves (semaines 3 à 7)
 ├── figures/                    figures versionnées reprises dans ce README
@@ -1041,7 +1044,7 @@ Le test définitif a donc été **préenregistré** : espacement fixé par une r
 
 ---
 
-## Semaine 7 — Détection opportune et boucle adversariale exacte
+## Semaine 7 — Détection opportune, boucle adversariale exacte, sensibilité
 
 La semaine 4 mesurait si l'intrus est détecté. Cette semaine demande s'il l'est **à temps**, puis construit
 la boucle « l'optimiseur place, l'intrus trouve la faille, l'optimiseur corrige » sous une forme qui converge
@@ -1159,7 +1162,69 @@ sous-modulaires de la semaine 3, auxquelles s'ajoutent les coupes de couloirs. C
   budget permet un radar de plus.
 - Les encadrements larges (B = 19, 20) viennent de la limite de 30 min par cas sur 2 cœurs, pas de la méthode.
 
-### 5. Ce qu'il faut retenir de la semaine 7
+### 6. Analyse de sensibilité par regret de décision (`src/sensibilite.py`)
+
+La question n'est pas « la métrique varie-t-elle ? » mais « **qu'aurait coûté de se tromper ?** ». Pour chaque
+scénario, on garde la décision nominale (D_0 : 2 radars, 12,8 ; D_10 : 1 radar et 3 caméras, 13,5), on
+vérifie si elle tient, et on recalcule l'optimum certifié c\*_s. Le protocole, les scénarios et quatre
+prédictions ont été **fixés avant le calcul** (§9.3 de `formulation.md`).
+
+**Contrôles.** Le domaine et `A_intrus` nominaux sont reconstruits à l'identique (écart max = 0), et le
+scénario nominal redonne 12,8 et 13,5. Changer le feuillage ne demande pas de toucher au moteur de visibilité :
+τ est linéaire en k, donc k × f ⇔ α × f (vérifié par un test).
+
+![Regret des décisions nominales](figures/regret.png)
+
+| Scénario | T_min | D_0 : p̃\* (tient ?) | c\*_s | D_10 : p̃\* (tient ?) | c\*_s |
+|---|---|---|---|---|---|
+| Nominal | 30,3 s | 0,96 ✓ | 12,8 | 0,93 ✓ | 13,5 |
+| Retard (30, 3) à (120, 120) s | 33 à 140 s | 0,96 ✓ | 12,8 | 0,93 ✓ | 13,5 |
+| Vitesse 1 m/s | 40,4 s | 0,96 ✓ | 12,8 | 0,93 ✓ | 13,1 (regret 0,4) |
+| **Vitesse 3 m/s (course)** | **18,0 s** | 0,96 ✓ | 12,8 | **0,00 ✗** | 15,4 (+1,9) |
+| **Bande 15 m** | 19,6 s | 0,96 ✓ | 12,8 | **0,66 ✗** | 14,6 (+1,1) |
+| Bande 50 m | 44,6 s | 0,96 ✓ | 12,6 (regret 0,2) | 0,93 ✓ | 12,6 (regret 0,9) |
+| **Feuillage × 2** | 30,3 s | **0,87 ✗** | 13,2 (+0,4) | **0,38 ✗** | 14,6 (+1,1) |
+| **Feuillage × 4** | 30,3 s | **0,23 ✗** | 14,7 (+1,9) | **0,00 ✗** | 16,6 (+3,1) |
+
+**Prédictions préenregistrées**
+
+| | Prédiction | Verdict |
+|---|---|---|
+| H1 | Renforcer la clôture seule plafonne T_min vers 33 s (l'intrus passe par un portail) | **Confirmée** : 30,3 → 33,0 s. Il faut renforcer aussi les portails (50,3 s). |
+| H2 | À la course, T_min tombe vers 20 s et D_10 ne tient plus | **Confirmée** : 18,0 s, p̃\* = 0. |
+| H3 | Le feuillage pénalise surtout les caméras ; D_0 (radars) tient à f = 2 | **Réfutée pour D_0** : p̃\* = 0,87. Le radar subit l'atténuation à l'aller et au retour : 2 × 0,3 × f = 1,2 à f = 2, soit plus que la caméra nominale (α = 1). |
+| H4 | La bande touche surtout D_10, qui détecte à l'extérieur | **Confirmée** : à 15 m, D_10 tombe à 0,66, D_0 est intact. |
+
+**Selon le critère préenregistré, aucune des deux décisions n'est stable** : D_0 tient dans 9 scénarios sur
+11, D_10 dans 7 sur 11. Les écarts restent modestes, entre 0,4 et 3,1 unités.
+
+**Le retard est le vrai levier**
+
+![Matrice retard × temps de réponse](figures/frontiere_retard.png)
+
+- **Tant qu'un cas est réalisable, le coût ne dépend pas du retard** : 12,8, 13,5 et 15,4 pour T_R = 0, 10
+  et 30 s, quel que soit (t_c, t_p). Le retard ne rend pas les capteurs moins chers. Il **rend possibles**
+  des temps de réponse qui ne l'étaient pas.
+- Avec clôture et portails à 120 s, **une réponse en 2 minutes est couverte pour 15,4**, le même dispositif
+  que pour 30 s. Sans retard, elle est impossible quel que soit le budget.
+- Renforcer la clôture sans les portails ne sert presque à rien (+2,7 s). Le retard se dimensionne sur le
+  **maillon le plus faible**.
+
+**Ce qu'il faut retenir de l'analyse de sensibilité**
+1. **Dimensionner avec le feuillage.** Le vol LiDAR date de novembre : les transmittances nominales sont
+   optimistes pour l'été. Ce facteur casse les deux décisions ; le couvrir coûte +0,4 (D_0) à +1,1 (D_10) à
+   f = 2.
+2. **Le profil de l'intrus compte plus que la géométrie fine.** À la course, T_min passe de 30 à 18 s ;
+   c'est le scénario le plus défavorable pour D_10.
+3. **Les décisions qui détectent tôt sont les plus fragiles.** D_10 regarde dehors, là où la bande, la
+   vitesse et le feuillage agissent tous.
+4. **La largeur de bande est une hypothèse de modélisation qui change la réponse** : à 50 m, l'optimum est
+   moins cher (12,6), parce que chaque chemin traverse plus de terrain surveillable. Ce n'est acceptable que
+   si une détection sur la voie publique est vraiment exploitable (limite §7.7-3).
+5. **τ_obs et π n'ont pas été simulés**, parce qu'ils n'entrent pas dans p̃\*_F : les décisions y sont
+   insensibles par construction.
+
+### 7. Ce qu'il faut retenir de la semaine 7
 
 1. **Détecter n'est pas interrompre.** Au-delà de T_min ≈ 30 s de temps de réponse, aucun capteur ne protège
    Bat.3 : c'est une propriété du site, démontrée, pas un défaut de l'optimisation.
@@ -1171,6 +1236,10 @@ sous-modulaires de la semaine 3, auxquelles s'ajoutent les coupes de couloirs. C
    lieu de 28,6, et à B = 30 elle ne coûte presque rien en couverture.
 5. **Chaque accélération a été choisie sur une mesure** (borne bloquée, maître lent, configurations vides) et
    reste exacte ; la force brute la valide.
+6. **Le retard est le levier que les capteurs ne remplacent pas.** Renforcer clôture et portails à 120 s
+   rend couvrable une réponse en 2 minutes pour 15,4 unités ; sans retard, elle est impossible.
+7. **Aucune décision nominale n'est stable** au sens préenregistré : le feuillage d'été et un intrus qui
+   court suffisent à les casser, pour un surcoût de réparation de 0,4 à 3,1 unités.
 
 ---
 
@@ -1304,6 +1373,12 @@ sous-modulaires de la semaine 3, auxquelles s'ajoutent les coupes de couloirs. C
     rapide, et ses solutions restent valides sous la seconde.
 56. **Réservoir de couloirs, coupure par l'incumbent, retrait des configurations dominées** : trois
     accélérations exactes, validées par énumération exhaustive sur instances jouets.
+57. **Regret de décision plutôt que variation de métrique** : on mesure ce que coûte de s'être trompé
+    (sur-dimensionnement ou surcoût de réparation), avec un optimum certifié dans chaque scénario.
+58. **Protocole et prédictions préenregistrés**, y compris une prédiction réfutée (H3), publiée telle quelle.
+59. **Configurations identifiées par clé** : une décision se transporte d'un scénario à l'autre même quand
+    `A_intrus` est reconstruite.
+60. **Feuillage par α × f**, exact car τ est linéaire en k : aucun nouveau calcul de visibilité.
 
 ## Limites connues
 
@@ -1358,15 +1433,24 @@ sous-modulaires de la semaine 3, auxquelles s'ajoutent les coupes de couloirs. C
 - **Optimum certifié sous fusion max** : sous indépendance, seul un encadrement est obtenu dans la limite de
   10 min par cas.
 - **Prix de la robustesse encadré seulement** au-delà de B = 16 (limite de 30 min par cas sur 2 cœurs).
+- **Sensibilité un facteur à la fois** : les interactions (course et feuillage, par exemple) ne sont pas
+  explorées.
+- **Feuillage uniforme** (α × f pour toute la végétation, conifères compris) : pessimiste ; pas de données
+  LiDAR feuillées pour le calibrer.
 - **Modèles scikit-learn picklés** (`b2.joblib`) : ils ne se rechargent qu'avec la version qui les a écrits ;
   à régénérer par `python -m src.baselines_surrogate`.
 
 ## Prochaines étapes
 
-**Semaine 7 — suite : analyse de sensibilité (7.3)**
-- Mesurée par le **regret de décision** : f_perturbé(x\*_perturbé) − f_perturbé(x\*_nominal).
-- Paramètres : largeur de la bande b, temps d'escalade t_c (levier de retard), T_R, τ_obs, fusion
-  (max contre produit), pondération par actif, saison feuillée (k → f·k, soit T → T^f).
+**Suite directe de la semaine 7**
+- **Décision robuste multi-scénarios** : un seul dispositif qui tient dans tous les scénarios plausibles
+  (nominal, feuillage × 2, course, bande 15 m). La boucle s'y prête directement : un oracle d'intrus par
+  scénario, les coupes de tous les scénarios dans un même maître.
+- **Retard dans l'optimisation** : donner un coût au renforcement de la clôture et des portails, et optimiser
+  capteurs et retard ensemble.
+
+**Semaine 8** — démo Streamlit (budget, T_R, retard, scénario ; couloir de l'intrus et dispositif certifié),
+article.
 
 **Perspectives issues des semaines 5–6**
 - **Mettre le modèle de substitution dans la boucle d'un optimiseur d'ensemble** : sélection gloutonne sur
