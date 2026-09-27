@@ -10,3 +10,4 @@ data/external/
 *.gpkg-wal
 *.gpkg-shm
 *.qgz
+data/sites/*/processed/

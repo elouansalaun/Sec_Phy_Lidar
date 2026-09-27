@@ -8,6 +8,8 @@ Usage   : python -m src.site
 """
 from __future__ import annotations
 
+import copy
+import os
 import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -29,9 +31,118 @@ ASSET_TYPES = {"batiment", "equipement"}
 # =============================================================================
 # Étape 1 — Configuration et chargement
 # =============================================================================
-def load_config(path: Path = ROOT / "config.yaml") -> dict:
+ENV_SITE = "LIDAR_SITE"   # site actif : nom (data/sites/<nom>) ou chemin d'un dossier ; vide = référence
+EXT_LAZ = (".laz", ".las")
+
+
+def dossier_site(site: str, root: Path = ROOT, dossier: str = "data/sites") -> Path:
+    """Nom -> root/data/sites/<nom> ; chemin (contient un séparateur, ~ ou existe) -> ce dossier."""
+    p = Path(site).expanduser()
+    if p.is_absolute() or os.sep in site or "/" in site or site.startswith("~"):
+        return p.resolve()
+    return (root / dossier / site).resolve()
+
+
+def tuiles(d: Path) -> list[Path]:
+    """Tuiles LAZ/LAS d'un dossier (sans les index .copc.laz créés par QGIS)."""
+    return sorted(p for p in d.glob("*") if p.suffix.lower() in EXT_LAZ
+                  and not p.name.lower().endswith(".copc.laz"))
+
+
+def load_config(path: Path = ROOT / "config.yaml", site: str | None = None) -> dict:
+    """Configuration du site actif.
+
+    Sans site (ni argument, ni variable LIDAR_SITE) : config.yaml tel quel, site de référence.
+    Avec un site (nom de data/sites/ ou chemin d'un dossier quelconque) :
+      entrées  — <dossier>/site.gpkg ou <dossier>/site/site.gpkg (dessiné dans QGIS),
+                 les tuiles LAZ du dossier s'il en contient (sinon data/raw),
+                 <dossier>/config.yaml s'il existe (surcharges propres au site) ;
+      sorties  — tout dans <dossier>/sorties/ (site/, processed/, figures/) ;
+      réglages — config.yaml, puis multisite.profil, puis <dossier>/config.yaml.
+    """
+    path = Path(path)
     with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    site = site if site is not None else os.environ.get(ENV_SITE, "")
+    if not site:
+        return cfg
+
+    root = path.resolve().parent
+    ms = cfg.get("multisite", {})
+    d = dossier_site(site, root, ms.get("dossier", "data/sites"))
+    sources = [p for p in (d / "site.gpkg", d / "site" / "site.gpkg") if p.exists()]
+    if not sources:
+        raise FileNotFoundError(f"site « {site} » : ni {d / 'site.gpkg'} ni "
+                                f"{d / 'site' / 'site.gpkg'} n'existe")
+    cfg = _fusion(cfg, ms.get("profil", {}))
+    surcharge = d / "config.yaml"
+    if surcharge.exists():
+        with open(surcharge, encoding="utf-8") as f:
+            cfg = _fusion(cfg, yaml.safe_load(f) or {})
+
+    sorties = d / ms.get("sous_dossier_sorties", "sorties")
+    cfg = {k: (v if k == "multisite" else _relocaliser(v, sorties)) for k, v in cfg.items()}
+    cfg["site"]["gpkg_source"] = str(sources[0])          # original QGIS, jamais modifié
+    cfg["site"]["gpkg"] = str(sorties / "site" / "site.gpkg")   # copie contrôlée (src.multisite)
+    laz = tuiles(d)
+    if laz:                                               # le dossier apporte ses propres tuiles
+        ext = laz[0].suffix
+        cfg["rasters"]["tiles_glob"] = str(d / f"*{ext}")
+    if laz or cfg.get("lidar", {}).get("data_extent") == "auto":
+        cfg["lidar"]["data_extent"] = emprise_tuiles(laz or tuiles(root / "data/raw"))
+    cfg["site_actif"] = site
+    cfg["site_nom"] = d.name
+    cfg["site_dossier"] = str(d)
+    cfg["site_sorties"] = str(sorties)
+    return cfg
+
+
+def emprise_tuiles(paths: list[Path]) -> list[float]:
+    """Emprise commune (union des boîtes) des tuiles, lue dans les en-têtes LAS : rapide."""
+    import laspy
+
+    if not paths:
+        raise FileNotFoundError("aucune tuile LAZ pour calculer l'emprise des données")
+    b = []
+    for p in paths:
+        with laspy.open(p) as r:
+            h = r.header
+            b.append((h.mins[0], h.mins[1], h.maxs[0], h.maxs[1]))
+    b = np.array(b)
+    return [float(b[:, 0].min()), float(b[:, 1].min()), float(b[:, 2].max()), float(b[:, 3].max())]
+
+
+def _fusion(base: dict, surcharge: dict) -> dict:
+    """Fusion récursive : les dictionnaires se fusionnent, tout le reste (listes comprises) remplace."""
+    out = copy.deepcopy(base)
+    for k, v in surcharge.items():
+        out[k] = _fusion(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) \
+            else copy.deepcopy(v)
+    return out
+
+
+def _relocaliser(v, sorties: Path):
+    """Chemins de sortie -> <dossier du site>/sorties/… ; données brutes et externes inchangées.
+
+    data/site/x        -> sorties/site/x        (produits dérivés du site)
+    data/processed/x   -> sorties/processed/x   (toutes les sorties de calcul)
+    figures[/x]        -> sorties/figures[/x]
+    data/raw, data/external : inchangés.
+    """
+    if isinstance(v, dict):
+        return {k: _relocaliser(x, sorties) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_relocaliser(x, sorties) for x in v]
+    if not isinstance(v, str):
+        return v
+    for src, dst in (("data/site/", "site/"), ("data/processed/", "processed/"),
+                     ("figures/", "figures/")):
+        if v.startswith(src):
+            return str(sorties / dst / v[len(src):])
+    if v in ("data/processed", "figures"):
+        return str(sorties / ("processed" if v == "data/processed" else "figures"))
+    return v
+
 
 def _normalize(text) -> str:
     """'Équipement ' -> 'equipement' : minuscules, sans accents ni espaces."""
@@ -169,6 +280,21 @@ class Grid:
         return {**asdict(self), "width": self.width, "height": self.height}
 
 
+def buffer_auto(perimeter, data_extent, res: float, b_min: float, b_max: float) -> float:
+    """Plus grand tampon ≤ b_max qui tient dans les données (site proche du bord d'une tuile).
+
+    Les rayons de visibilité ne relient que des capteurs du site à des cellules du domaine de
+    l'intrus (site + bande_ext_m) : un tampon de quelques dizaines de mètres suffit au calcul.
+    """
+    x0, y0, x1, y1 = perimeter.bounds
+    dx0, dy0, dx1, dy1 = data_extent
+    marge = np.floor(min(x0 - dx0, y0 - dy0, dx1 - x1, dy1 - y1) / res) * res - res
+    if marge < b_min:
+        raise SiteValidationError(f"le site est à {marge:.0f} m du bord des données LiDAR "
+                                  f"(minimum {b_min:g} m) : ajoute des tuiles voisines.")
+    return float(min(b_max, marge))
+
+
 def build_study_area(perimeter, buffer_m: float, res: float, crs: str,
                      data_extent: list[float]):
     zone = perimeter.buffer(buffer_m)
@@ -240,7 +366,12 @@ def main() -> None:
 
     assets = build_assets(zones)
     cover = build_coverage_zones(assets, zones, perimeter, s["approach_ring_m"])
-    zone, couronne, grid = build_study_area(perimeter, s["study_buffer_m"],
+    buffer_m = s["study_buffer_m"]
+    if buffer_m == "auto":
+        buffer_m = buffer_auto(perimeter, cfg["lidar"]["data_extent"], s["resolution_m"],
+                               cfg["intrus"]["bande_ext_m"] + 20, s.get("study_buffer_max_m", 400))
+        print(f"Tampon de la zone d'étude (auto) : {buffer_m:g} m")
+    zone, couronne, grid = build_study_area(perimeter, buffer_m,
                                             s["resolution_m"], crs,
                                             cfg["lidar"]["data_extent"])
 

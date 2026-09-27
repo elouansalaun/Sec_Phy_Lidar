@@ -213,3 +213,27 @@ surrogate:                       # modèle de substitution : carte de potentiel 
       tailles_preenregistre: [5, 10, 15, 20]
       facteur_espacement: 0.5    # R = 0,5 · √(A_type / K_type)
       masse_bande: 1.0           # masse de la bande extérieure = masse intérieure
+
+multisite:                       # plusieurs sites dessinés dans QGIS (src/multisite.py, docs/multisite.md)
+  dossier: "data/sites"          # sites rangés dans le dépôt ; un site peut aussi être un dossier quelconque
+  sous_dossier_sorties: "sorties"  # toutes les sorties d'un site : <dossier du site>/sorties/
+  out_dir: "data/processed/multisite"
+  figures_dir: "figures/multisite"
+  reference: "Site Alpha"        # étiquette du site de référence (data/site) dans la comparaison
+  profil:                        # surcharges appliquées à chaque site secondaire (budget de calcul réduit)
+    site:
+      study_buffer_m: "auto"     # ≤ 400 m, réduit si le site est près du bord des tuiles (≥ bande_ext_m + 20)
+    optimisation:
+      milp: {temps_maitre_s: 30, temps_max_s: 120}   # optimum encadré [LB, UB] plutôt que certifié à 0,5 %
+    nsga:
+      graines: [1, 2]
+      k_couverture: {zones: "equipements"}           # résolu par nom : indices propres à chaque site
+    boucle:
+      theta: [0.5, 0.9]
+      t_reponse_s: [0, 10]
+      theta_produit: []
+      temps_max_s: 600
+  comparaison:
+    theta: 0.9                   # coût minimal certifié c(θ, T_R) comparé entre sites
+    t_reponse_s: [0, 10]
+    seuils_p_star: [0.5, 0.9]    # coût minimal du front NSGA-II pour garantir p*_F ≥ seuil

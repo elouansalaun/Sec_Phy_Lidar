@@ -42,6 +42,31 @@ from src.intrus import detection, load_domaine, seuil_couloir, solutions_s3
 # =============================================================================
 # Étape 1 — Instance étendue et évaluation
 # =============================================================================
+def zones_k_couverture(spec, cfg, root, zone_cellules) -> list[int]:
+    """Indices (couche couverture) des zones soumises à la k-couverture.
+
+    spec : liste d'indices ou de noms (colonne source), ou « equipements » : les anneaux
+    d'approche de tous les actifs de type équipement (à défaut, celui de la cible de l'intrus).
+    Seules les zones qui contiennent au moins une cellule sont gardées.
+    """
+    import geopandas as gpd
+
+    derive = root / cfg["site"]["output_gpkg"]
+    sources = list(gpd.read_file(derive, layer="couverture")["source"])
+    if spec == "equipements":
+        actifs = gpd.read_file(derive, layer="actifs")
+        noms = set(actifs.loc[actifs["type"] == "equipement", "nom"])
+        idx = [i for i, s in enumerate(sources) if s in noms]
+        if not idx:
+            cible = set(actifs.loc[actifs["cible_intrus"].astype(bool), "nom"])
+            idx = [i for i, s in enumerate(sources) if s in cible]
+    else:
+        idx = [int(z) if not isinstance(z, str) else sources.index(z) for z in spec]
+    idx = [i for i in idx if np.any(zone_cellules == i)]
+    assert idx, f"k-couverture : aucune zone retenue pour {spec!r}"
+    return idx
+
+
 class Evaluateur:
     """Tout ce qu'il faut pour juger un ensemble T d'indices de A_intrus."""
 
@@ -56,7 +81,7 @@ class Evaluateur:
         self.zone = cells["zone"]
         k = cfg["nsga"]["k_couverture"]
         self.k, self.k_p, self.k_part = k["k"], k["p_min"], k["part_min"]
-        self.k_zones = [int(z) for z in k["zones"]]
+        self.k_zones = zones_k_couverture(k["zones"], cfg, root, self.zone)
         self.B_max = float(cfg["optimisation"]["budget"]["max"])
 
     def evaluer(self, T) -> dict:

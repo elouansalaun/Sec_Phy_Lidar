@@ -146,6 +146,9 @@ Chaque étape se lance par `python -m <module>`. Les figures se régénèrent sa
 - [**Formulation**](docs/formulation.md) : modèles, propositions et preuves (couverture sous-modulaire,
   couloir p\*, détection opportune, convergence de la boucle).
 - [**Article**](docs/article.md) : le projet raconté pour un lecteur pressé.
+- [**Autres sites**](docs/multisite.md) : la chaîne complète sur un site dessiné dans QGIS et rangé
+  n'importe où (`python -m src.multisite lancer <dossier>`), sorties dans `<dossier>/sorties`, et la
+  comparaison des sites.
 
 ## Limites principales
 

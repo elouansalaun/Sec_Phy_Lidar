@@ -45,14 +45,15 @@ class Donnees:
     solutions: pd.DataFrame
 
 
-def charger(root) -> Donnees:
+def charger(root, site: str | None = None) -> Donnees:
+    """site : dossier de data/sites/ ; "" = site de référence ; None = variable LIDAR_SITE."""
     import geopandas as gpd
 
     from src.rasters import load_grid
     from src.viewshed import read
     from src.site import load_config
 
-    cfg = load_config(root / "config.yaml")
+    cfg = load_config(root / "config.yaml", site=site)
     dom, A, conf = load_domaine(cfg, root)
     cells = np.load(root / cfg["coverage"]["out_dir"] / "cellules.npz")
     n_int = int(dom.interieur.sum())
@@ -73,8 +74,10 @@ def charger(root) -> Donnees:
     front["T"] = [np.array(str(s).split(), np.int64) for s in front["configs"]]
     front = front.drop_duplicates("configs").reset_index(drop=True)
     f_sol = root / cfg["boucle"]["out_dir"] / "solutions.csv"
-    sol = pd.read_csv(f_sol) if f_sol.exists() else pd.DataFrame(
-        columns=["theta", "T_R", "fusion", "config"])
+    try:                                # absent, ou vide si aucun optimum n'a été certifié
+        sol = pd.read_csv(f_sol)
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        sol = pd.DataFrame(columns=["theta", "T_R", "fusion", "config"])
     return Donnees(cfg, dom, A, conf, inst, config_key(conf).to_numpy(), cells["w"], grid, per,
                    actifs, cand, fond, fen, front, sol)
 
@@ -140,7 +143,7 @@ def solutions_certifiees(D: Donnees) -> pd.DataFrame:
     for (th, T_R, fu), g in D.solutions.groupby(["theta", "T_R", "fusion"]):
         T = g["config"].to_numpy(np.int64)
         rows.append(dict(theta=th, T_R=T_R, fusion=fu, cout=cost(D.inst, T), T=T))
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=["theta", "T_R", "fusion", "cout", "T"])
 
 
 def meilleure_du_front(D: Donnees, budget: float, critere: str) -> pd.Series | None:

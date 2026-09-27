@@ -22,11 +22,30 @@ st.set_page_config(page_title="Surveillance LiDAR", page_icon="📡", layout="wi
 
 
 @st.cache_resource(show_spinner="Chargement du site, du graphe et de la matrice de détection…")
-def donnees():
-    return charger(ROOT)
+def donnees(site: str):
+    return charger(ROOT, site)
 
 
-D = donnees()
+def sites_disponibles() -> dict[str, str]:
+    """Étiquette -> site ("" = référence), pour les sites dont la boucle a été calculée."""
+    from src.multisite import REFERENCE, config_site, sites_connus
+    out = {}
+    for nom in [REFERENCE] + sites_connus():
+        cfg = config_site(nom)
+        if (ROOT / cfg["boucle"]["out_dir"] / "solutions.csv").exists():
+            etiq = "Site de référence" if nom == REFERENCE else f"Site « {cfg['site_nom']} »"
+            out[etiq] = "" if nom == REFERENCE else nom
+    return out
+
+
+SITES = sites_disponibles()
+SITE = st.sidebar.selectbox("Site", list(SITES), key="site") if len(SITES) > 1 else next(iter(SITES))
+if st.session_state.get("site_charge") != SITE:          # changement de site : on repart à zéro
+    st.session_state.pop("T", None)
+    st.session_state["site_charge"] = SITE
+D = donnees(SITES[SITE])
+REF = SITES[SITE] == ""
+CIBLE = D.actifs.loc[D.actifs["cible_intrus"].astype(bool), "nom"].iloc[0]
 S = solutions_certifiees(D)
 
 # =============================================================================
@@ -39,7 +58,7 @@ sb.caption("Site **fictif** superposé à un secteur urbain quelconque de Montr�
 sb.header("Intrus")
 T_R = sb.slider("Temps de réponse T_R (s)", 0, 150, 10, 5,
                 help="Une détection ne compte que s'il reste au moins T_R secondes à l'intrus "
-                     "pour atteindre Bat.3 (détection opportune, modèle EASI).")
+                     f"pour atteindre {CIBLE} (détection opportune, modèle EASI).")
 vitesse = sb.select_slider("Vitesse (m/s)", [1.0, 1.5, 3.0], 1.5,
                            format_func=lambda v: {1.0: "1,0 lente", 1.5: "1,5 marche",
                                                   3.0: "3,0 course"}[v])
@@ -54,17 +73,29 @@ mode = sb.radio("Source", ["Optimum certifié", "Front NSGA-II", "Placement manu
                      "Front NSGA-II : couverture / pire cas (semaine 4). "
                      "Placement manuel : ajoutez ou retirez des capteurs, l'intrus répond.")
 
+def _defaut(liste, valeur):
+    """Index de valeur dans liste (sinon le dernier) : les sites secondaires ont moins de cas."""
+    return liste.index(valeur) if valeur in liste else len(liste) - 1
+
+
 if "T" not in st.session_state:
-    st.session_state["T"] = S[(S.theta == 0.9) & (S.T_R == 10) & (S.fusion == "max")].iloc[0]["T"]
+    d = S[(S.theta == 0.9) & (S.T_R == 10) & (S.fusion == "max")]
+    st.session_state["T"] = d.iloc[0]["T"] if len(d) else np.zeros(0, np.int64)
 
 if mode == "Optimum certifié":
     sm = S[S["fusion"] == "max"]
-    th = sb.selectbox("Détection opportune exigée θ", sorted(sm["theta"].unique()), index=1)
-    tr = sb.selectbox("Pour un temps de réponse de (s)", sorted(sm[sm.theta == th]["T_R"].unique()),
-                      index=1, format_func=lambda v: f"{v:g}")
-    ligne = sm[(sm.theta == th) & (sm.T_R == tr)].iloc[0]
-    st.session_state["T"] = ligne["T"]
-    sb.info(f"Coût minimal **certifié** : {ligne['cout']:.1f} unités.")
+    if sm.empty:
+        sb.warning("Aucun optimum certifié pour ce site (voir le journal de src.boucle).")
+        st.session_state["T"] = np.zeros(0, np.int64)
+    else:
+        thetas = sorted(sm["theta"].unique())
+        th = sb.selectbox("Détection opportune exigée θ", thetas, index=_defaut(thetas, 0.9))
+        trs = sorted(sm[sm.theta == th]["T_R"].unique())
+        tr = sb.selectbox("Pour un temps de réponse de (s)", trs, index=_defaut(trs, 10.0),
+                          format_func=lambda v: f"{v:g}")
+        ligne = sm[(sm.theta == th) & (sm.T_R == tr)].iloc[0]
+        st.session_state["T"] = ligne["T"]
+        sb.info(f"Coût minimal **certifié** : {ligne['cout']:.1f} unités.")
 elif mode == "Front NSGA-II":
     B = sb.slider("Budget", 2.0, 30.0, 16.0, 0.5)
     crit = sb.radio("Critère", ["F", "p*_F"], horizontal=True,
@@ -156,11 +187,25 @@ with tab_res:
         ("chemins_decouplage.png", "Couvrir n'est pas protéger",
          "À B = 16, l'optimum de couverture gagne 0,6 point de F et perd 67 points de détection garantie."),
     ]
+    if not REF:                    # les commentaires ci-dessus décrivent le site de référence
+        blocs = [(f, t, "") for f, t, _ in blocs[:2]] + [
+            ("chemins_milp.png", "Couloirs de l'intrus face aux optima de couverture", ""),
+            ("carte_solutions.png", "Solutions de couverture certifiées", "")]
+    ms = ROOT / D.cfg["multisite"]["figures_dir"]
     for f, titre, texte in blocs:
         if (fig / f).exists():
             st.subheader(titre)
             st.caption(texte)
             st.image(str(fig / f), use_container_width=True)
+        elif (ROOT / D.cfg["intrus"]["out_dir"] / f).exists():
+            st.subheader(titre)
+            st.image(str(ROOT / D.cfg["intrus"]["out_dir"] / f), use_container_width=True)
+    if (ms / "exigences.png").exists():
+        st.subheader("Comparaison des sites")
+        st.caption("Même chaîne, même exigence : ce que change la géométrie du site.")
+        for f in ("atlas.png", "exigences.png", "courbes.png"):
+            if (ms / f).exists():
+                st.image(str(ms / f), use_container_width=True)
 
 with tab_meth:
     st.markdown("""
