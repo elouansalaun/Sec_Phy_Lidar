@@ -11,4 +11,5 @@ data/external/
 *.gpkg-wal
 *.gpkg-shm
 *.qgz
-docs/formulation.md
+
+formulation.md
