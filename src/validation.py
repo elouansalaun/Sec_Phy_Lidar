@@ -1,12 +1,12 @@
 """
-src/validation.py — Validation du MNT contre deux références indépendantes.
+src/validation.py: validation of the DTM against two independent references.
 
-1. PDAL (writers.gdal, binmode) sur une zone test : contrôle de NOTRE mise en grille.
-2. MNT du MRNF (produit officiel, autre projection) : contrôle de la chaîne complète.
+1. PDAL (writers.gdal, binmode) on a test area: checks OUR gridding.
+2. MRNF DTM (official product, other projection): checks the whole chain.
 
 Usage :
-    python -m src.validation pdal      # écrit le pipeline PDAL à exécuter
-    python -m src.validation compare   # compare notre MNT aux références disponibles
+    python -m src.validation pdal      # writes the PDAL pipeline to run
+    python -m src.validation compare   # compares our DTM with the available references
 """
 from __future__ import annotations
 
@@ -24,10 +24,10 @@ from src.site import ROOT, Grid, load_config
 
 
 # =============================================================================
-# Étape 1 — Sous-grille de test, alignée sur la grille principale
+# Step 1: test sub-grid, aligned on the main grid
 # =============================================================================
 def subgrid(grid: Grid, bounds, margin: float) -> Grid:
-    """Sous-grille autour de `bounds`, dont les bords tombent sur ceux de `grid`."""
+    """Sub-grid around `bounds`, whose edges fall on those of `grid`."""
     r = grid.res
     snap = lambda v, f: float(f((v - grid.xmin) / r) * r + grid.xmin)
     snapy = lambda v, f: float(f((v - grid.ymin) / r) * r + grid.ymin)
@@ -38,7 +38,7 @@ def subgrid(grid: Grid, bounds, margin: float) -> Grid:
 
 
 # =============================================================================
-# Étape 2 — Pipeline PDAL de référence
+# Step 2: reference PDAL pipeline
 # =============================================================================
 def pdal_pipeline(tiles: list[str], sub: Grid, out: Path) -> dict:
     return {"pipeline": [
@@ -54,10 +54,10 @@ def pdal_pipeline(tiles: list[str], sub: Grid, out: Path) -> dict:
 
 
 # =============================================================================
-# Étape 3 — Lecture de notre MNT sur une sous-grille, et d'une référence rééchantillonnée
+# Step 3: reading our DTM on a sub-grid, and a resampled reference
 # =============================================================================
 def read_on(path: Path, target: Grid, resampling=Resampling.nearest) -> np.ndarray:
-    """Lit un raster (n'importe quelle projection) rééchantillonné sur `target`."""
+    """Reads a raster (any projection) resampled on `target`."""
     dst = np.full((target.height, target.width), np.nan, np.float32)
     transform = rasterio.transform.from_origin(target.xmin, target.ymax, target.res, target.res)
     with rasterio.open(path) as src:
@@ -68,13 +68,13 @@ def read_on(path: Path, target: Grid, resampling=Resampling.nearest) -> np.ndarr
 
 
 # =============================================================================
-# Étape 4 — Statistiques d'écart
+# Step 4: difference statistics
 # =============================================================================
 def diff_stats(ours: np.ndarray, ref: np.ndarray, mask: np.ndarray) -> dict:
     d = (ours - ref)[mask & np.isfinite(ours) & np.isfinite(ref)]
     med = np.median(d)
     return {"n": int(d.size),
-            "biais_m": float(d.mean()),
+            "bias_m": float(d.mean()),
             "rmse_m": float(np.sqrt(np.mean(d ** 2))),
             "nmad_m": float(1.4826 * np.median(np.abs(d - med))),
             "p99_abs_m": float(np.percentile(np.abs(d), 99))}
@@ -84,21 +84,21 @@ def compare(name: str, ref_path: Path, target: Grid, measured: np.ndarray,
             ours_path: Path, resampling, out_dir: Path) -> None:
     ours = read_on(ours_path, target)
     ref = read_on(ref_path, target, resampling)
-    for label, m in [("sol mesuré", measured), ("sol interpolé", ~measured)]:
+    for label, m in [("measured ground", measured), ("interpolated", ~measured)]:
         s = diff_stats(ours, ref, m)
-        print(f"  {name:6s} | {label:14s} | n={s['n']:7d}  biais={s['biais_m']:+.3f}  "
+        print(f"  {name:6s} | {label:15s} | n={s['n']:7d}  bias={s['bias_m']:+.3f}  "
               f"RMSE={s['rmse_m']:.3f}  NMAD={s['nmad_m']:.3f}  |d|p99={s['p99_abs_m']:.3f} m")
     diff = np.where(np.isfinite(ours) & np.isfinite(ref), ours - ref, NODATA).astype(np.float32)
     profile = dict(driver="GTiff", width=target.width, height=target.height, count=1,
                    dtype="float32", crs=target.crs, nodata=NODATA, compress="deflate",
                    transform=rasterio.transform.from_origin(target.xmin, target.ymax,
                                                             target.res, target.res))
-    with rasterio.open(out_dir / f"diff_mnt_{name}.tif", "w", **profile) as dst:
+    with rasterio.open(out_dir / f"diff_dtm_{name}.tif", "w", **profile) as dst:
         dst.write(diff, 1)
 
 
 # =============================================================================
-# Étape 5 — Orchestration
+# Step 5: orchestration
 # =============================================================================
 def main(cmd: str) -> None:
     cfg = load_config()
@@ -108,26 +108,26 @@ def main(cmd: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     rast = ROOT / rc["out_dir"]
 
-    per = gpd.read_file(ROOT / cfg["site"]["gpkg"], layer="perimetre")
+    per = gpd.read_file(ROOT / cfg["site"]["gpkg"], layer="perimeter")
     sub = subgrid(grid, per.total_bounds, v["margin_m"])
 
     if cmd == "pdal":
         tiles = sorted(str(p) for p in (ROOT / "data/raw").glob("*.LAZ")
                        if not p.name.lower().endswith(".copc.laz") and tile_intersects(str(p), sub))
-        path = out_dir / "mnt_pdal.json"
+        path = out_dir / "dtm_pdal.json"
         path.write_text(json.dumps(pdal_pipeline(tiles, sub, ROOT / v["pdal_ref"]), indent=2))
-        print(f"Pipeline écrit : {path}\nLance : pdal pipeline {path.relative_to(ROOT)}")
+        print(f"Pipeline written: {path}\nRun: pdal pipeline {path.relative_to(ROOT)}")
         return
 
-    print(f"Zone test PDAL : {sub.width} x {sub.height} px | grille complète : {grid.width} x {grid.height} px")
+    print(f"PDAL test area: {sub.width} x {sub.height} px | full grid: {grid.width} x {grid.height} px")
     refs = [("pdal", ROOT / v["pdal_ref"], sub, Resampling.nearest),
             ("mrnf", ROOT / v["mrnf_ref"], grid, Resampling.bilinear)]
     for name, path, target, resampling in refs:
         if not path.exists():
-            print(f"  {name:6s} | référence absente ({path.relative_to(ROOT)}), ignorée")
+            print(f"  {name:6s} | reference missing ({path.relative_to(ROOT)}), skipped")
             continue
-        measured = read_on(rast / "mnt_comble.tif", target) == 0
-        compare(name, path, target, measured, rast / "mnt.tif", resampling, out_dir)
+        measured = read_on(rast / "dtm_filled.tif", target) == 0
+        compare(name, path, target, measured, rast / "dtm.tif", resampling, out_dir)
 
 
 if __name__ == "__main__":

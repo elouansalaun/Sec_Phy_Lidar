@@ -1,29 +1,29 @@
 """
-Tests du jeu de données du modèle de substitution (src/dataset_surrogate.py).
+Tests of the dataset of the surrogate model (src/surrogate_dataset.py).
 
-1. Cohérence : le noyau `potentiel` redonne exactement l'agrégation de `optical_depth`.
-2. Terrain plat, sans végétation : tout le sol est visible, V = 1 dans chaque bin.
-3. Symétries du groupe D4 : tourner ou retourner le terrain permute les secteurs.
-   C'est ce qui autorise l'augmentation de données par rotations en 5.3.
-4. Monotonie : V ne décroît pas quand l'observateur monte.
-5. Découpage : le site est dans le test, le tampon est respecté, les disques sont complets.
+1. Consistency: the `potential` kernel gives back exactly the aggregation of `optical_depth`.
+2. Flat terrain, no vegetation: the whole ground is visible, V = 1 in each bin.
+3. Symmetries of the D4 group: rotating or flipping the terrain permutes the sectors.
+   This is what allows the data augmentation by rotations in 5.3.
+4. Monotonicity: V does not decrease when the observer goes up.
+5. Split: the site is in the test set, the buffer is respected, the discs are complete.
 
 Usage : python -m pytest tests/test_surrogate_data.py -v
 """
 import numpy as np
 import pytest
 
-from src.dataset_surrogate import SPLITS, EXCLU, bins_disque, decoupage, potentiel
+from src.surrogate_dataset import EXCLUDED, SPLITS, disc_bins, potential, spatial_split
 from src.viewshed import optical_depth
 
 N, RES, R = 81, 1.0, 30
-ANNEAUX, NS = [0, 10, 30], 8
+RINGS, NS = [0, 10, 30], 8
 H = np.array([2.0, 5.0, 12.0])
-DR, DC, B, NBIN = bins_disque(R, ANNEAUX, NS, RES)
+DR, DC, B, NBIN = disc_bins(R, RINGS, NS, RES)
 
 
 def terrain(seed=0, veg=True):
-    """Relief doux, blocs opaques, taches de végétation : un cas où tout intervient."""
+    """Gentle relief, opaque blocks, vegetation patches: a case where everything matters."""
     rng = np.random.default_rng(seed)
     rr, cc = np.indices((N, N))
     z = 2.0 * np.sin(rr / 9.0) + 1.5 * np.cos(cc / 7.0)
@@ -41,64 +41,64 @@ def terrain(seed=0, veg=True):
 
 
 def run(zo, zv, k, zt, obs):
-    sol = zo < zt
+    ground = zo < zt
     r = np.array([o[0] for o in obs], np.int64)
     c = np.array([o[1] for o in obs], np.int64)
-    return potentiel(zo, zv, k, zt, sol, r, c, H, DR, DC, B, NBIN, RES).astype(np.float64)
+    return potential(zo, zv, k, zt, ground, r, c, H, DR, DC, B, NBIN, RES).astype(np.float64)
 
 
-def agreger(zo, zv, k, zt, r0, c0, h):
-    """Référence : disque de optical_depth, puis somme de T par bin, en numpy."""
+def aggregate(zo, zv, k, zt, r0, c0, h):
+    """Reference: disc of optical_depth, then sum of T per bin, in numpy."""
     tau = optical_depth(zo, zv, k, zt, r0, c0, zo[r0, c0] + h, R, RES).astype(np.float64)
-    sol = zo < zt
+    ground = zo < zt
     acc = np.zeros(NBIN.size)
     for dr, dc, b in zip(DR, DC, B):
         t = tau[r0 + dr, c0 + dc]
-        if sol[r0 + dr, c0 + dc] and np.isfinite(t):
+        if ground[r0 + dr, c0 + dc] and np.isfinite(t):
             acc[b] += np.exp(-t)
     return acc / NBIN
 
 
 # -----------------------------------------------------------------------------
-# 1. Cohérence avec le moteur de visibilité
+# 1. Consistency with the visibility engine
 # -----------------------------------------------------------------------------
 @pytest.mark.parametrize("seed", [0, 1, 2])
-def test_coherence_optical_depth(seed):
+def test_consistency_optical_depth(seed):
     zo, zv, k, zt = terrain(seed)
     obs = [(40, 40), (35, 47), (45, 33)]
     V = run(zo, zv, k, zt, obs)
     for i, (r0, c0) in enumerate(obs):
         for ih, h in enumerate(H):
-            np.testing.assert_allclose(V[i, ih], agreger(zo, zv, k, zt, r0, c0, h), atol=1e-6)
+            np.testing.assert_allclose(V[i, ih], aggregate(zo, zv, k, zt, r0, c0, h), atol=1e-6)
 
 
 # -----------------------------------------------------------------------------
-# 2. Terrain plat : tout est visible
+# 2. Flat terrain: everything is visible
 # -----------------------------------------------------------------------------
-def test_plat_tout_visible():
+def test_flat_everything_visible():
     z = np.zeros((N, N))
     V = run(z, z, z, z + 1.0, [(40, 40)])
     np.testing.assert_allclose(V, 1.0, atol=1e-6)
-    assert NBIN.sum() == DR.size                      # chaque cellule du disque dans un bin
+    assert NBIN.sum() == DR.size                      # each cell of the disc in one bin
 
 
-def test_bins_geometrie():
-    # Répartition quasi uniforme entre secteurs, et les deux anneaux sont remplis
-    n = NBIN.reshape(len(ANNEAUX) - 1, NS)
+def test_bin_geometry():
+    # Almost uniform distribution between sectors, and both rings are filled
+    n = NBIN.reshape(len(RINGS) - 1, NS)
     assert (n > 0).all()
     assert n.max(axis=1).min() / n.min(axis=1).max() < 1.1
-    # Le nord (−r) est le secteur 0, l'est (+c) le secteur 2
+    # North (−r) is sector 0, east (+c) sector 2
     i_n = np.flatnonzero((DR == -20) & (DC == 0))[0]
     i_e = np.flatnonzero((DR == 0) & (DC == 20))[0]
     assert B[i_n] % NS == 0 and B[i_e] % NS == 2
 
 
 # -----------------------------------------------------------------------------
-# 3. Symétries D4 : rotation de 90° et miroir
+# 3. D4 symmetries: 90° rotation and mirror
 # -----------------------------------------------------------------------------
 def permute(V, perm):
-    """V[..., anneau·NS + s] -> secteur perm[s]."""
-    Vr = V.reshape(*V.shape[:-1], len(ANNEAUX) - 1, NS)
+    """V[..., ring·NS + s] -> sector perm[s]."""
+    Vr = V.reshape(*V.shape[:-1], len(RINGS) - 1, NS)
     out = np.empty_like(Vr)
     out[..., perm] = Vr
     return out.reshape(V.shape)
@@ -108,48 +108,48 @@ def test_rotation_90():
     zo, zv, k, zt = terrain(3)
     r0, c0 = 38, 44
     V = run(zo, zv, k, zt, [(r0, c0)])
-    rot = lambda a: np.rot90(a, k=-1).copy()          # sens horaire : nord -> est
-    # (r, c) -> (c, N-1-r) pour une rotation horaire
+    rot = lambda a: np.rot90(a, k=-1).copy()          # clockwise: north -> east
+    # (r, c) -> (c, N-1-r) for a clockwise rotation
     Vr = run(rot(zo), rot(zv), rot(k), rot(zt), [(c0, N - 1 - r0)])
     np.testing.assert_allclose(Vr, permute(V, (np.arange(NS) + 2) % NS), atol=1e-5)
 
 
-def test_miroir():
+def test_mirror():
     zo, zv, k, zt = terrain(4)
     r0, c0 = 42, 37
     V = run(zo, zv, k, zt, [(r0, c0)])
-    fl = lambda a: a[:, ::-1].copy()                  # est <-> ouest : azimut -> −azimut
+    fl = lambda a: a[:, ::-1].copy()                  # east <-> west: azimuth -> −azimuth
     Vm = run(fl(zo), fl(zv), fl(k), fl(zt), [(r0, N - 1 - c0)])
     np.testing.assert_allclose(Vm, permute(V, (NS - np.arange(NS)) % NS), atol=1e-5)
 
 
 # -----------------------------------------------------------------------------
-# 4. Monotonie en hauteur
+# 4. Monotonicity in height
 # -----------------------------------------------------------------------------
 @pytest.mark.parametrize("seed", [5, 6])
-def test_monotone_hauteur_opaque(seed):
-    """Sans végétation, le rayon monte en tout point quand z_obs monte : V est non décroissant."""
+def test_monotone_height_opaque(seed):
+    """Without vegetation, the ray goes up at every point when z_obs goes up: V is non-decreasing."""
     zo, zv, k, zt = terrain(seed, veg=False)
     V = run(zo, zv, k, zt, [(40, 40), (33, 50)])
     assert np.all(np.diff(V, axis=1) >= -1e-6)
 
 
-def test_vegetation_brise_la_monotonie():
-    """Avec végétation, la monotonie n'est PAS garantie : un rayon entièrement sous la canopée
-    y parcourt √(1 + pente²) m par mètre horizontal, et la pente croît avec h (§8.2).
-    Le réseau ne doit donc pas être contraint à être monotone en h."""
+def test_vegetation_breaks_monotonicity():
+    """With vegetation, monotonicity is NOT guaranteed: a ray fully under the canopy travels
+    √(1 + slope²) m per horizontal metre inside it, and the slope grows with h (§8.2).
+    The network must therefore not be constrained to be monotone in h."""
     z = np.zeros((N, N))
     zv, k = z.copy(), z.copy()
-    zv[40, 45:48] = 30.0                              # colonne de canopée haute, traversée de part en part
+    zv[40, 45:48] = 30.0                              # tall canopy column, crossed through and through
     k[40, 45:48] = 0.5
     zt = z + 1.0
     V = run(z, zv, k, zt, [(40, 40)])
     b = B[np.flatnonzero((DR == 0) & (DC == 10))[0]]
-    assert V[0, 1, b] < V[0, 0, b]                     # h = 5 m voit moins bien que h = 2 m
+    assert V[0, 1, b] < V[0, 0, b]                     # h = 5 m sees less than h = 2 m
 
 
 # -----------------------------------------------------------------------------
-# 5. Découpage spatial
+# 5. Spatial split
 # -----------------------------------------------------------------------------
 class _G:
     xmin, ymax, res = 0.0, 400.0, 1.0
@@ -160,16 +160,16 @@ class _S:
     grid = _G()
 
 
-def test_decoupage():
+def test_split():
     cfg = {"project": {"random_seed": 0},
-           "surrogate": {"rayon_m": 60, "test": {"marge_m": 20, "tampon_m": 15},
-                         "validation": {"tuile_m": 50, "part": 0.2}}}
-    split = decoupage(_S(), cfg, (180.0, 180.0, 220.0, 220.0))   # site de 40 m au centre
-    r, c = np.nonzero(split != EXCLU)
-    assert r.min() >= 60 and r.max() < 340 and c.min() >= 60 and c.max() < 340   # disque complet
-    # le site est entièrement en test
+           "surrogate": {"radius_m": 60, "test": {"margin_m": 20, "buffer_m": 15},
+                         "validation": {"tile_m": 50, "share": 0.2}}}
+    split = spatial_split(_S(), cfg, (180.0, 180.0, 220.0, 220.0))   # 40 m site in the centre
+    r, c = np.nonzero(split != EXCLUDED)
+    assert r.min() >= 60 and r.max() < 340 and c.min() >= 60 and c.max() < 340   # full disc
+    # the site is entirely in the test set
     assert (split[180:220, 180:220] == SPLITS["test"]).all()
-    # aucune cellule d'entraînement ou de validation à moins de 15 m du bloc test
+    # no training or validation cell within 15 m of the test block
     tr, tc = np.nonzero(split == SPLITS["test"])
     a, b = np.nonzero(split <= SPLITS["validation"])
     dr = np.maximum(np.maximum(tr.min() - a, a - tr.max()), 0)

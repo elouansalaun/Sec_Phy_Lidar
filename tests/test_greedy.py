@@ -1,4 +1,4 @@
-"""Tests du glouton : propriétés vérifiables exactement sur des instances jouets."""
+"""Tests of the greedy: properties that can be checked exactly on toy instances."""
 from itertools import combinations
 
 import numpy as np
@@ -29,7 +29,7 @@ def make(P, w=None, support=None, kind=None, a=None, site=None, f=None, cap=(4, 
 
 
 def random_instance(seed: int) -> Instance:
-    """8 configurations sur 4 supports (2 emplacements × 2 hauteurs), 20 cellules."""
+    """8 configurations on 4 supports (2 locations × 2 heights), 20 cells."""
     rng = np.random.default_rng(seed)
     P = rng.uniform(0, 1, (8, 20)) * (rng.uniform(size=(8, 20)) < 0.4)
     return make(P, w=rng.uniform(0.5, 2, 20),
@@ -47,16 +47,16 @@ def brute_force(inst: Instance, budget: float) -> float:
     return best
 
 
-# --- Correction de l'évaluation -----------------------------------------------------------
-def test_evaluate_independance():
-    """Deux capteurs à 0,5 sur la même cellule : 1 − 0,5 × 0,5 = 0,75."""
+# --- Correctness of the evaluation ---------------------------------------------------------
+def test_evaluate_independence():
+    """Two sensors at 0.5 on the same cell: 1 − 0.5 × 0.5 = 0.75."""
     inst = make([[0.5], [0.5]])
     assert evaluate(inst, [0, 1]) == pytest.approx(0.75)
     assert evaluate(inst, []) == 0.0
 
 
-def test_identite_logarithmique():
-    """1 − Π(1 − P) = 1 − exp(−Σ λ), fondement de la linéarisation (formulation, §4.1)."""
+def test_log_identity():
+    """1 − Π(1 − P) = 1 − exp(−Σ λ), basis of the linearisation (formulation, §4.1)."""
     rng = np.random.default_rng(0)
     P = rng.uniform(0, 0.99, (5, 30))
     inst = make(P)
@@ -64,15 +64,15 @@ def test_identite_logarithmique():
     assert evaluate(inst, range(5)) == pytest.approx(np.sum(1 - np.exp(-lam)), rel=1e-12)
 
 
-def test_cout_support_paye_une_fois():
+def test_support_cost_paid_once():
     inst = make(np.eye(2), support=[0, 0], a=[1, 1], f=[3])
     assert cost(inst, [0, 1]) == pytest.approx(5.0)
 
 
-# --- Glouton ------------------------------------------------------------------------------
+# --- Greedy -------------------------------------------------------------------------------
 @pytest.mark.parametrize("seed", range(10))
 @pytest.mark.parametrize("budget", [2.0, 4.0, 7.0, 12.0])
-def test_glouton_realisable_et_sous_optimum(seed, budget):
+def test_greedy_feasible_and_below_optimum(seed, budget):
     inst = random_instance(seed)
     sol = greedy(inst, budget)
     assert violations(inst, sol.T, budget) == []
@@ -80,57 +80,57 @@ def test_glouton_realisable_et_sous_optimum(seed, budget):
 
 
 @pytest.mark.parametrize("seed", range(5))
-def test_trace_coherente(seed):
-    """La somme des gains marginaux Δ = A @ (w ⊙ q) redonne F(T) exact."""
+def test_consistent_trace(seed):
+    """The sum of the marginal gains Δ = A @ (w ⊙ q) gives back the exact F(T)."""
     inst = random_instance(seed)
     sol = ratio_greedy(inst, 12.0)
     assert sol.trace["gain"].sum() == pytest.approx(sol.value, rel=1e-10)
 
 
-def test_optimal_sur_couvertures_disjointes():
-    """Coûts égaux, couvertures disjointes : le glouton est exactement optimal."""
+def test_optimal_on_disjoint_coverages():
+    """Equal costs, disjoint coverages: the greedy is exactly optimal."""
     inst = make(np.diag([5.0, 4, 3, 2, 1]) / 5)
     sol = greedy(inst, 3.0)
     assert set(sol.T) == {0, 1, 2}
     assert sol.value == pytest.approx(brute_force(inst, 3.0))
 
 
-def test_singleton_sauve_le_ratio():
-    """Cas pathologique du ratio seul (Khuller et al.) : le singleton rattrape."""
+def test_singleton_rescues_the_ratio():
+    """Pathological case of the ratio alone (Khuller et al.): the singleton catches up."""
     P = np.zeros((2, 101))
-    P[0, 0] = 1.0            # gain 1,   coût 0,01 -> ratio 100
-    P[1, 1:] = 1.0           # gain 100, coût 10   -> ratio 10
+    P[0, 0] = 1.0            # gain 1,   cost 0.01 -> ratio 100
+    P[1, 1:] = 1.0           # gain 100, cost 10   -> ratio 10
     inst = make(P, a=[0.01, 10.0])
     assert ratio_greedy(inst, 10.0).value == pytest.approx(1.0)
     sol = greedy(inst, 10.0)
     assert sol.source == "singleton" and sol.value == pytest.approx(100.0)
 
 
-def test_verrouillage_de_hauteur():
-    """(C3) : une fois le mât de 4 m ouvert, la configuration à 10 m devient interdite."""
-    P = np.array([[1, 0, 0], [1, 1, 1]], dtype=float)  # 10 m voit tout, 4 m une seule cellule
+def test_height_lock_in():
+    """(C3): once the 4 m mast is open, the configuration at 10 m becomes forbidden."""
+    P = np.array([[1, 0, 0], [1, 1, 1]], dtype=float)  # 10 m sees everything, 4 m a single cell
     inst = make(P, support=[0, 1], site=[0, 0], a=[0.1, 3.0], f=[0.1, 0.1])
     sol = ratio_greedy(inst, 10.0)
-    assert list(sol.T) == [0]          # ratio 5 contre 0,97 : le glouton verrouille 4 m
-    assert brute_force(inst, 10.0) == pytest.approx(3.0)   # l'optimum était 10 m
+    assert list(sol.T) == [0]          # ratio 5 against 0.97: the greedy locks in 4 m
+    assert brute_force(inst, 10.0) == pytest.approx(3.0)   # the optimum was 10 m
 
 
-def test_capacite_radar():
-    """(C4) : deux radars à couvertures disjointes sur un même support, un seul autorisé."""
+def test_radar_capacity():
+    """(C4): two radars with disjoint coverages on the same support, only one allowed."""
     inst = make(np.eye(2), support=[0, 0], kind=[RAD, RAD], cap=(4, 1))
     sol = greedy(inst, 100.0)
     assert sol.T.size == 1 and violations(inst, sol.T, 100.0) == []
 
 
-def test_support_partage():
-    """Le 2e capteur sur un support déjà payé ne coûte que son prix : le glouton en profite."""
+def test_shared_support():
+    """The 2nd sensor on an already paid support only costs its price: the greedy uses it."""
     P = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
     inst = make(P, support=[0, 0, 1], a=[1, 1, 1], f=[2, 2])
     sol = greedy(inst, 4.0)
     assert set(sol.T) == {0, 1} and sol.cost == pytest.approx(4.0)
 
 
-def test_budget_insuffisant():
+def test_insufficient_budget():
     inst = make(np.eye(2), a=[5, 5])
     assert best_singleton(inst, 1.0) is None
     assert greedy(inst, 1.0).T.size == 0

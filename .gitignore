@@ -1,6 +1,7 @@
-
-
 __pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
 *.aux.xml
 data/raw/
 data/interim/
@@ -10,4 +11,4 @@ data/external/
 *.gpkg-wal
 *.gpkg-shm
 *.qgz
-data/sites/*/processed/
+docs/formulation.md

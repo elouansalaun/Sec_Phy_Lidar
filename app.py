@@ -1,10 +1,10 @@
 """
-app.py — Démo interactive : surveillance optimale d'un site à partir de données LiDAR.
+app.py: interactive demo: optimal surveillance of a site from LiDAR data.
 
     streamlit run app.py
 
-Site fictif superposé à un secteur urbain de Montréal ; aucune information sur un site réel.
-La logique est dans src/demo.py ; cette page ne fait qu'afficher.
+Fictitious site overlaid on an urban area ; no information about a real sensitive site.
+The logic lives in src/demo.py; this page only displays.
 """
 from __future__ import annotations
 
@@ -14,210 +14,177 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from src.demo import (carte, charger, configurations, decrire, evaluer, meilleure_du_front,
-                      solutions_certifiees)
+from src.demo import (best_of_front, certified_solutions, configurations_at, describe_layout,
+                      evaluate_layout, layout_map, load_demo)
 
 ROOT = Path(__file__).resolve().parent
-st.set_page_config(page_title="Surveillance LiDAR", page_icon="📡", layout="wide")
+st.set_page_config(page_title="LiDAR surveillance", page_icon="📡", layout="wide")
 
 
-@st.cache_resource(show_spinner="Chargement du site, du graphe et de la matrice de détection…")
-def donnees(site: str):
-    return charger(ROOT, site)
+@st.cache_resource(show_spinner="Loading the site, the graph and the detection matrix...")
+def data():
+    return load_demo(ROOT)
 
 
-def sites_disponibles() -> dict[str, str]:
-    """Étiquette -> site ("" = référence), pour les sites dont la boucle a été calculée."""
-    from src.multisite import REFERENCE, config_site, sites_connus
-    out = {}
-    for nom in [REFERENCE] + sites_connus():
-        cfg = config_site(nom)
-        if (ROOT / cfg["boucle"]["out_dir"] / "solutions.csv").exists():
-            etiq = "Site de référence" if nom == REFERENCE else f"Site « {cfg['site_nom']} »"
-            out[etiq] = "" if nom == REFERENCE else nom
-    return out
-
-
-SITES = sites_disponibles()
-SITE = st.sidebar.selectbox("Site", list(SITES), key="site") if len(SITES) > 1 else next(iter(SITES))
-if st.session_state.get("site_charge") != SITE:          # changement de site : on repart à zéro
-    st.session_state.pop("T", None)
-    st.session_state["site_charge"] = SITE
-D = donnees(SITES[SITE])
-REF = SITES[SITE] == ""
-CIBLE = D.actifs.loc[D.actifs["cible_intrus"].astype(bool), "nom"].iloc[0]
-S = solutions_certifiees(D)
+D = data()
+TARGET = D.assets.loc[D.assets["intruder_target"].astype(bool), "name"].iloc[0]
+S = certified_solutions(D)
 
 # =============================================================================
-# Barre latérale : l'intrus, puis le dispositif
+# Sidebar: the intruder, then the layout
 # =============================================================================
 sb = st.sidebar
-sb.caption("Site **fictif** superposé à un secteur urbain quelconque de Montréal. "
-           "Données LiDAR © Gouvernement du Québec (MRNF), CC BY 4.0.")
+sb.caption("**Fictitious** site overlaid on an arbitrary urban area. "
+           "LiDAR data © Gouvernement du Québec (MRNF), CC BY 4.0.")
 
-sb.header("Intrus")
-T_R = sb.slider("Temps de réponse T_R (s)", 0, 150, 10, 5,
-                help="Une détection ne compte que s'il reste au moins T_R secondes à l'intrus "
-                     f"pour atteindre {CIBLE} (détection opportune, modèle EASI).")
-vitesse = sb.select_slider("Vitesse (m/s)", [1.0, 1.5, 3.0], 1.5,
-                           format_func=lambda v: {1.0: "1,0 lente", 1.5: "1,5 marche",
-                                                  3.0: "3,0 course"}[v])
-t_c = sb.slider("Retard : escalade de la clôture (s)", 0, 120, 10, 5)
-t_p = sb.slider("Retard : passage d'un portail (s)", 0, 120, 3, 1)
-ic = dict(D.cfg["intrus"], vitesse_m_s=float(vitesse), t_cloture_s=float(t_c),
-          t_portail_s=float(t_p))
+sb.header("Intruder")
+T_R = sb.slider("Response time T_R (s)", 0, 150, 10, 5,
+                help="A detection only counts if the intruder still needs at least T_R seconds "
+                     f"to reach {TARGET} (timely detection, EASI model).")
+speed = sb.select_slider("Speed (m/s)", [1.0, 1.5, 3.0], 1.5,
+                         format_func=lambda v: {1.0: "1.0 slow", 1.5: "1.5 walking",
+                                                3.0: "3.0 running"}[v])
+t_c = sb.slider("Delay: fence climb (s)", 0, 120, 10, 5)
+t_p = sb.slider("Delay: gate passage (s)", 0, 120, 3, 1)
+ic = dict(D.cfg["intruder"], speed_m_s=float(speed), t_fence_s=float(t_c),
+          t_gate_s=float(t_p))
 
-sb.header("Dispositif")
-mode = sb.radio("Source", ["Optimum certifié", "Front NSGA-II", "Placement manuel"],
-                help="Optimum certifié : boucle adversariale exacte (semaine 7). "
-                     "Front NSGA-II : couverture / pire cas (semaine 4). "
-                     "Placement manuel : ajoutez ou retirez des capteurs, l'intrus répond.")
+sb.header("Layout")
+mode = sb.radio("Source", ["Certified optimum", "NSGA-II front", "Manual placement"],
+                help="Certified optimum: exact adversarial loop (week 7). "
+                     "NSGA-II front: coverage / worst case (week 4). "
+                     "Manual placement: add or remove sensors, the intruder answers.")
 
-def _defaut(liste, valeur):
-    """Index de valeur dans liste (sinon le dernier) : les sites secondaires ont moins de cas."""
-    return liste.index(valeur) if valeur in liste else len(liste) - 1
+def _default(items, value):
+    """Index of value in items (otherwise the last one): the loop may not cover every case."""
+    return items.index(value) if value in items else len(items) - 1
 
 
 if "T" not in st.session_state:
     d = S[(S.theta == 0.9) & (S.T_R == 10) & (S.fusion == "max")]
     st.session_state["T"] = d.iloc[0]["T"] if len(d) else np.zeros(0, np.int64)
 
-if mode == "Optimum certifié":
+if mode == "Certified optimum":
     sm = S[S["fusion"] == "max"]
     if sm.empty:
-        sb.warning("Aucun optimum certifié pour ce site (voir le journal de src.boucle).")
+        sb.warning("No certified optimum for this site (see the log of src.adversarial_loop).")
         st.session_state["T"] = np.zeros(0, np.int64)
     else:
         thetas = sorted(sm["theta"].unique())
-        th = sb.selectbox("Détection opportune exigée θ", thetas, index=_defaut(thetas, 0.9))
+        th = sb.selectbox("Required timely detection θ", thetas, index=_default(thetas, 0.9))
         trs = sorted(sm[sm.theta == th]["T_R"].unique())
-        tr = sb.selectbox("Pour un temps de réponse de (s)", trs, index=_defaut(trs, 10.0),
+        tr = sb.selectbox("For a response time of (s)", trs, index=_default(trs, 10.0),
                           format_func=lambda v: f"{v:g}")
-        ligne = sm[(sm.theta == th) & (sm.T_R == tr)].iloc[0]
-        st.session_state["T"] = ligne["T"]
-        sb.info(f"Coût minimal **certifié** : {ligne['cout']:.1f} unités.")
-elif mode == "Front NSGA-II":
+        row = sm[(sm.theta == th) & (sm.T_R == tr)].iloc[0]
+        st.session_state["T"] = row["T"]
+        sb.info(f"**Certified** minimal cost: {row['cost']:.1f} units.")
+elif mode == "NSGA-II front":
     B = sb.slider("Budget", 2.0, 30.0, 16.0, 0.5)
-    crit = sb.radio("Critère", ["F", "p*_F"], horizontal=True,
-                    help="F : couverture pondérée. p*_F : détection garantie sur le pire couloir.")
-    s = meilleure_du_front(D, B, "F" if crit == "F" else "p")
+    crit = sb.radio("Criterion", ["F", "p*_F"], horizontal=True,
+                    help="F: weighted coverage. p*_F: guaranteed detection on the worst corridor.")
+    s = best_of_front(D, B, "F" if crit == "F" else "p")
     if s is None:
-        sb.warning("Aucune solution du front sous ce budget.")
+        sb.warning("No front solution under this budget.")
         st.session_state["T"] = np.zeros(0, np.int64)
     else:
         st.session_state["T"] = s["T"]
 else:
     T = list(map(int, st.session_state["T"]))
-    with sb.expander("Ajouter un capteur", expanded=True):
+    with sb.expander("Add a sensor", expanded=True):
         cands = sorted(D.conf["cand"].unique())
-        cand = st.selectbox("Emplacement", cands)
+        cand = st.selectbox("Location", cands)
         hs = sorted(D.conf.loc[D.conf["cand"] == cand, "h"].unique())
-        h = st.selectbox("Hauteur (m)", hs, format_func=lambda v: f"{v:g}")
-        caps = sorted(D.conf.loc[(D.conf["cand"] == cand) & np.isclose(D.conf["h"], h),
-                                 "capteur"].unique())
-        cap = st.selectbox("Capteur", caps)
-        opts = configurations(D, cand, h, cap)
-        if cap.startswith("radar"):
-            j = st.selectbox("Inclinaison", opts.index,
-                             format_func=lambda i: f"{D.conf.at[i, 'inclinaison']:g}°")
+        h = st.selectbox("Height (m)", hs, format_func=lambda v: f"{v:g}")
+        sensors = sorted(D.conf.loc[(D.conf["cand"] == cand) & np.isclose(D.conf["h"], h),
+                                    "sensor"].unique())
+        sensor = st.selectbox("Sensor", sensors)
+        opts = configurations_at(D, cand, h, sensor)
+        if sensor.startswith("radar"):
+            j = st.selectbox("Tilt", opts.index,
+                             format_func=lambda i: f"{D.conf.at[i, 'tilt']:g}°")
         else:
-            j = st.selectbox("Azimut", opts.index,
-                             format_func=lambda i: f"{D.conf.at[i, 'azimut']:g}°")
-        if st.button("Ajouter", use_container_width=True):
+            j = st.selectbox("Azimuth", opts.index,
+                             format_func=lambda i: f"{D.conf.at[i, 'azimuth']:g}°")
+        if st.button("Add", use_container_width=True):
             T = sorted(set(T) | {int(j)})
-    lab = {int(j): f"{D.conf.at[j, 'cand']} · {D.conf.at[j, 'capteur']} · h {D.conf.at[j, 'h']:g}"
+    lab = {int(j): f"{D.conf.at[j, 'cand']} · {D.conf.at[j, 'sensor']} · h {D.conf.at[j, 'h']:g}"
            for j in T}
-    retirer = sb.multiselect("Retirer", T, format_func=lambda j: lab[j])
-    if sb.button("Retirer la sélection", use_container_width=True) and retirer:
-        T = [j for j in T if j not in retirer]
-    if sb.button("Tout vider", use_container_width=True):
+    remove = sb.multiselect("Remove", T, format_func=lambda j: lab[j])
+    if sb.button("Remove the selection", use_container_width=True) and remove:
+        T = [j for j in T if j not in remove]
+    if sb.button("Clear all", use_container_width=True):
         T = []
     st.session_state["T"] = np.array(T, np.int64)
 
 # =============================================================================
-# Page principale
+# Main page
 # =============================================================================
-st.title("Surveillance optimale d'un site à partir de données LiDAR")
-tab_demo, tab_res, tab_meth = st.tabs(["Démo", "Résultats clés", "Méthode"])
+st.title("Optimal surveillance of a site from LiDAR data")
+tab_demo, tab_res, tab_meth = st.tabs(["Demo", "Key results", "Method"])
 
 with tab_demo:
-    r = evaluer(D, st.session_state["T"], ic, float(T_R))
+    r = evaluate_layout(D, st.session_state["T"], ic, float(T_R))
     k = st.columns(6)
-    k[0].metric("Coût", f"{r['cout']:.1f}")
-    k[1].metric("Couverture F", f"{100 * r['F']:.1f} %")
-    k[2].metric("p* déterminé", f"{r['p_star_F']:.2f}",
-                help="Détection garantie sur le couloir le moins surveillé (intrus qui franchit "
-                     "la clôture n'importe où).")
-    k[3].metric(f"p̃* à T_R = {T_R} s", f"{r['p_tilde_F']:.2f}",
-                help="Idem, en ne comptant que les détections assez précoces pour la réponse.")
-    k[4].metric("p* opportuniste", f"{r['p_star_G']:.2f}", help="Intrus qui passe par un portail.")
+    k[0].metric("Cost", f"{r['cost']:.1f}")
+    k[1].metric("Coverage F", f"{100 * r['F']:.1f} %")
+    k[2].metric("p* determined", f"{r['p_star_F']:.2f}",
+                help="Guaranteed detection on the least watched corridor (intruder who climbs "
+                     "the fence anywhere).")
+    k[3].metric(f"p̃* at T_R = {T_R} s", f"{r['p_tilde_F']:.2f}",
+                help="Same, counting only detections early enough for the response.")
+    k[4].metric("p* opportunistic", f"{r['p_star_G']:.2f}", help="Intruder who uses a gate.")
     k[5].metric("T_min", f"{r['T_min_F']:.0f} s",
-                help="Temps d'intrusion minimal : au-delà, aucun dispositif ne peut détecter à temps.")
+                help="Minimal intrusion time: beyond it, no layout can detect in time.")
 
     if T_R >= r["T_min_F"]:
-        st.error(f"T_R = {T_R} s dépasse le temps d'intrusion minimal ({r['T_min_F']:.0f} s) : "
-                 "**aucun dispositif** ne peut garantir une détection à temps (proposition 2). "
-                 "Seul un retard plus grand (clôture **et** portails) peut rendre le cas possible.")
+        st.error(f"T_R = {T_R} s exceeds the minimal intrusion time ({r['T_min_F']:.0f} s): "
+                 "**no layout** can guarantee a timely detection (proposition 2). "
+                 "Only a larger delay (fence **and** gates) can make this case possible.")
     elif r["p_tilde_F"] < 0.5:
-        st.warning("L'intrus déterminé trouve un couloir où il n'est pas détecté à temps "
-                   "(tracé en pointillés).")
+        st.warning("The determined intruder finds a corridor where they are not detected in time "
+                   "(dotted line).")
     for v in r["violations"]:
-        st.warning(f"Contrainte violée : {v}")
+        st.warning(f"Violated constraint: {v}")
 
-    zone = st.toggle("Montrer la zone où une détection arrive trop tard", value=True)
-    st.plotly_chart(carte(D, r, float(T_R), montrer_zone_morte=zone), use_container_width=True)
-    with st.expander(f"Dispositif : {len(r['T'])} capteur(s)"):
-        st.dataframe(decrire(D, r["T"]), hide_index=True, use_container_width=True)
+    zone = st.toggle("Show the area where a detection comes too late", value=True)
+    st.plotly_chart(layout_map(D, r, float(T_R), show_dead_zone=zone), use_container_width=True)
+    with st.expander(f"Layout: {len(r['T'])} sensor(s)"):
+        st.dataframe(describe_layout(D, r["T"]), hide_index=True, use_container_width=True)
 
 with tab_res:
-    fig = ROOT / D.cfg["optimisation"]["figures_dir"]
-    blocs = [
-        ("temps_restant.png", "Détecter n'est pas interrompre",
-         "Temps restant jusqu'à la cible. Un coin de Bat.3 est à 1,2 m de la clôture : le temps "
-         "d'intrusion minimal est de 30 s. Au-delà de ce temps de réponse, aucun capteur ne protège."),
-        ("cout_robuste.png", "Coût minimal certifié",
-         "Boucle optimiseur ↔ intrus exacte : chaque point est un optimum prouvé. Demander la "
-         "détection opportune coûte 15,4 au lieu de 28,6 pour le meilleur point du front."),
-        ("frontiere_retard.png", "Le retard est le vrai levier",
-         "Avec clôture et portails à 120 s, une réponse en 2 minutes est couverte pour 15,4. Renforcer "
-         "la clôture seule ne sert presque à rien : l'intrus passe par un portail."),
-        ("regret.png", "Sensibilité par regret de décision",
-         "Le feuillage d'été et un intrus qui court suffisent à casser les décisions nominales ; le "
-         "surcoût de réparation reste de 0,4 à 3,1 unités."),
-        ("chemins_decouplage.png", "Couvrir n'est pas protéger",
-         "À B = 16, l'optimum de couverture gagne 0,6 point de F et perd 67 points de détection garantie."),
+    fig = ROOT / D.cfg["optimization"]["figures_dir"]
+    blocks = [
+        ("time_remaining.png", "Detecting is not interrupting",
+         "Time left to reach the target. Beyond the minimal intrusion time, no layout can detect "
+         "in time, whatever the budget."),
+        ("robust_cost.png", "Certified minimal cost",
+         "Exact optimiser ↔ intruder loop: each point is a proven optimum."),
+        ("delay_frontier.png", "Delay against response time",
+         "Minimal cost of a timely detection when the fence and the gates delay the intruder."),
+        ("regret.png", "Sensitivity by decision regret",
+         "What the nominal decisions cost when an assumption is wrong."),
+        ("decoupling_paths.png", "Covering is not protecting",
+         "At equal budget, the coverage optimum against the best worst-case layout."),
     ]
-    if not REF:                    # les commentaires ci-dessus décrivent le site de référence
-        blocs = [(f, t, "") for f, t, _ in blocs[:2]] + [
-            ("chemins_milp.png", "Couloirs de l'intrus face aux optima de couverture", ""),
-            ("carte_solutions.png", "Solutions de couverture certifiées", "")]
-    ms = ROOT / D.cfg["multisite"]["figures_dir"]
-    for f, titre, texte in blocs:
-        if (fig / f).exists():
-            st.subheader(titre)
-            st.caption(texte)
-            st.image(str(fig / f), use_container_width=True)
-        elif (ROOT / D.cfg["intrus"]["out_dir"] / f).exists():
-            st.subheader(titre)
-            st.image(str(ROOT / D.cfg["intrus"]["out_dir"] / f), use_container_width=True)
-    if (ms / "exigences.png").exists():
-        st.subheader("Comparaison des sites")
-        st.caption("Même chaîne, même exigence : ce que change la géométrie du site.")
-        for f in ("atlas.png", "exigences.png", "courbes.png"):
-            if (ms / f).exists():
-                st.image(str(ms / f), use_container_width=True)
+    for f, title, text in blocks:
+        path = next((d / f for d in (fig, ROOT / D.cfg["intruder"]["out_dir"]) if (d / f).exists()),
+                    None)
+        if path is not None:
+            st.subheader(title)
+            st.caption(text)
+            st.image(str(path), use_container_width=True)
 
 with tab_meth:
     st.markdown("""
-**Chaîne complète** (détails dans le README et `docs/formulation.md`) :
+**Full chain** (details in the README and `docs/formulation.md`):
 
-1. **LiDAR → rasters** : MNT, bâti, hauteur et fraction de trouée de la végétation (loi de Beer-Lambert).
-2. **Visibilité exacte** : parcours de toutes les cellules traversées, bâti opaque, végétation semi-transparente ; validée contre des solutions analytiques et un arbitre exact.
-3. **Capteurs** : caméra (densité de pixels, EN 62676-4) et radar (Swerling I), sur 4 151 configurations.
-4. **Optimisation de la couverture** : glouton, optimum certifié par coupes sous-modulaires, NSGA-II.
-5. **L'intrus** : couloir de moindre détection p\\* (union-find), détection opportune p̃\\* (EASI).
-6. **Boucle adversariale exacte** : génération de contraintes, l'intrus sert d'oracle ; optima certifiés.
-7. **Sensibilité** par regret de décision, protocole préenregistré.
+1. **LiDAR → rasters**: DTM, buildings, vegetation height and gap fraction (Beer-Lambert law).
+2. **Exact visibility**: traversal of every crossed cell, opaque buildings, semi-transparent vegetation; validated against analytical solutions and an exact referee.
+3. **Sensors**: camera (pixel density, EN 62676-4) and radar (Swerling I), or cameras only (`sensors.cameras_only`).
+4. **Coverage optimisation**: greedy, certified optimum by submodular cuts, NSGA-II.
+5. **The intruder**: least-detected corridor p\\* (union-find), timely detection p̃\\* (EASI).
+6. **Exact adversarial loop**: constraint generation, the intruder acts as the oracle; certified optima.
+7. **Sensitivity** by decision regret, preregistered protocol.
 
-**Éthique.** Le site, ses zones et ses actifs sont inventés. Publier des cartes d'angles morts d'un site réel sensible serait inacceptable.
+**Ethics.** The site, its zones and its assets are made up. Publishing blind-spot maps of a real sensitive site would be unacceptable.
 """)

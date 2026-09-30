@@ -1,15 +1,15 @@
 """
-src/greedy.py — Glouton au ratio gain/coût pour le placement de capteurs (docs/formulation.md, §5).
+src/greedy.py: gain/cost ratio greedy for sensor placement (docs/formulation.md, §5).
 
-Gain marginal de toutes les configurations en un produit creux : Δ = A @ (w ⊙ q),
-avec q la probabilité de non-détection courante. Coût marginal = capteur
-+ support s'il n'est pas encore ouvert. On renvoie le meilleur entre la solution
-gloutonne et le meilleur capteur isolé (Khuller, Moss et Naor, 1999).
+Marginal gain of every configuration in one sparse product: Δ = A @ (w ⊙ q),
+with q the current probability of non-detection. Marginal cost = sensor
++ support if it is not open yet. We return the best of the greedy solution
+and the best single sensor (Khuller, Moss and Naor, 1999).
 
-Aucune garantie d'approximation ici (coûts partagés, verrouillage de hauteur) :
-le MILP (src/milp.py) certifie l'écart.
+No approximation guarantee here (shared costs, height lock-in):
+the MILP (src/milp.py) certifies the gap.
 
-Sorties : optim/greedy.csv (une ligne par budget), optim/greedy_solutions.csv
+Outputs : optim/greedy.csv (one row per budget), optim/greedy_solutions.csv
 Usage   : python -m src.greedy
 """
 from __future__ import annotations
@@ -25,28 +25,28 @@ from src.instance import EPS, KINDS, Instance, cost, evaluate, load_instance, vi
 
 @dataclass
 class Solution:
-    T: np.ndarray                  # indices des configurations retenues
-    value: float                   # F(T), évaluation exacte
+    T: np.ndarray                  # indices of the selected configurations
+    value: float                   # F(T), exact evaluation
     cost: float
-    source: str                    # "ratio" ou "singleton"
+    source: str                    # "ratio" or "singleton"
     trace: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 # =============================================================================
-# Étape 1 — Glouton au ratio
+# Step 1: ratio greedy
 # =============================================================================
 def ratio_greedy(inst: Instance, budget: float, tol: float = 1e-12) -> Solution:
     nJ, nS = inst.n_configs, inst.n_supports
-    wq = inst.w.copy()                                   # w ⊙ q, avec q = 1 au départ
+    wq = inst.w.copy()                                   # w ⊙ q, with q = 1 at the start
     chosen = np.zeros(nJ, dtype=bool)
     is_open = np.zeros(nS, dtype=bool)
-    site_support = np.full(inst.site.max() + 1, -1)     # support ouvert sur chaque emplacement
+    site_support = np.full(inst.site.max() + 1, -1)     # support open at each location
     count = np.zeros((nS, len(KINDS)), dtype=np.int64)
     spent, value, steps = 0.0, 0.0, []
     gain_tol = tol * inst.W
 
     while True:
-        gain = inst.A @ wq                               # Δ_j pour tous les j
+        gain = inst.A @ wq                               # Δ_j for every j
         mcost = inst.cost_sensor + inst.cost_support[inst.support] * ~is_open[inst.support]
         s_open = site_support[inst.site[inst.support]]
         adm = (~chosen
@@ -68,9 +68,9 @@ def ratio_greedy(inst: Instance, budget: float, tol: float = 1e-12) -> Solution:
         spent += mcost[j]
         value += gain[j]
         wq *= 1.0 - inst.A[j].toarray().ravel()          # q ← q ⊙ (1 − P_j·)
-        steps.append(dict(etape=len(steps) + 1, config=j, support=s, ouvre_support=opened,
-                          gain=gain[j], cout_marginal=mcost[j], ratio=ratio[j],
-                          depense=spent, F=value))
+        steps.append(dict(step=len(steps) + 1, config=j, support=s, opens_support=opened,
+                          gain=gain[j], marginal_cost=mcost[j], ratio=ratio[j],
+                          spent=spent, F=value))
 
     T = np.flatnonzero(chosen)
     return Solution(T=T, value=evaluate(inst, T), cost=cost(inst, T),
@@ -78,7 +78,7 @@ def ratio_greedy(inst: Instance, budget: float, tol: float = 1e-12) -> Solution:
 
 
 # =============================================================================
-# Étape 2 — Meilleur singleton et combinaison
+# Step 2: best singleton and combination
 # =============================================================================
 def best_singleton(inst: Instance, budget: float) -> Solution | None:
     single_cost = inst.cost_sensor + inst.cost_support[inst.support]
@@ -91,17 +91,17 @@ def best_singleton(inst: Instance, budget: float) -> Solution | None:
 
 
 def greedy(inst: Instance, budget: float) -> Solution:
-    """Meilleur entre glouton au ratio et meilleur capteur isolé réalisable."""
+    """Best of the ratio greedy and the best feasible single sensor."""
     sol = ratio_greedy(inst, budget)
     single = best_singleton(inst, budget)
     if single is not None and single.value > sol.value + EPS:
-        single.trace = sol.trace                         # garder la trace pour le diagnostic
+        single.trace = sol.trace                         # keep the trace for diagnostics
         return single
     return sol
 
 
 # =============================================================================
-# Étape 3 — Balayage du budget
+# Step 3: budget sweep
 # =============================================================================
 def describe(inst: Instance, configs: pd.DataFrame, T) -> dict:
     sel = configs.iloc[np.asarray(T)]
@@ -109,7 +109,7 @@ def describe(inst: Instance, configs: pd.DataFrame, T) -> dict:
     S = np.unique(inst.support[np.asarray(T)])
     h = sel.drop_duplicates(["cand", "h"])["h"]
     return dict(n_radar=int((kinds == "radar").sum()), n_camera=int((kinds == "camera").sum()),
-                n_supports=len(S), hauteurs=" ".join(f"{x:g}" for x in sorted(h)))
+                n_supports=len(S), heights=" ".join(f"{x:g}" for x in sorted(h)))
 
 
 def main() -> None:
@@ -117,12 +117,12 @@ def main() -> None:
 
     cfg = load_config()
     inst, configs = load_instance(cfg, ROOT)
-    out = ROOT / cfg["optimisation"]["out_dir"]
+    out = ROOT / cfg["optimization"]["out_dir"]
     out.mkdir(parents=True, exist_ok=True)
-    b = cfg["optimisation"]["budget"]
-    budgets = np.arange(b["min"], b["max"] + EPS, b["pas"])
-    print(f"Instance : {inst.n_configs:,} configurations, {inst.n_supports} supports, "
-          f"{inst.A.shape[1]:,} cellules, W = {inst.W:,.0f}\n")
+    b = cfg["optimization"]["budget"]
+    budgets = np.arange(b["min"], b["max"] + EPS, b["step"])
+    print(f"Instance: {inst.n_configs:,} configurations, {inst.n_supports} supports, "
+          f"{inst.A.shape[1]:,} cells, W = {inst.W:,.0f}\n")
 
     rows, sols = [], []
     for B in budgets:
@@ -130,9 +130,9 @@ def main() -> None:
         sol = greedy(inst, B)
         dt = time.perf_counter() - t0
         v = violations(inst, sol.T, B)
-        assert not v, f"B = {B} : {v}"
-        rows.append(dict(budget=B, F=sol.value, couverture=sol.value / inst.W, cout=sol.cost,
-                         source=sol.source, n_config=sol.T.size, temps_s=dt,
+        assert not v, f"B = {B}: {v}"
+        rows.append(dict(budget=B, F=sol.value, coverage=sol.value / inst.W, cost=sol.cost,
+                         source=sol.source, n_config=sol.T.size, time_s=dt,
                          **describe(inst, configs, sol.T)))
         sols += [dict(budget=B, config=j) for j in sol.T]
 
@@ -141,15 +141,15 @@ def main() -> None:
     df.to_csv(out / "greedy.csv", index=False)
     pd.DataFrame(sols).to_csv(out / "greedy_solutions.csv", index=False)
 
-    # Détail de la solution au budget médian : comment le glouton construit sa solution
+    # Detail of the solution at the median budget: how the greedy builds its solution
     B = budgets[len(budgets) // 2]
     sol = greedy(inst, B)
-    tr = sol.trace.merge(configs[["cand", "h", "capteur", "azimut"]],
+    tr = sol.trace.merge(configs[["cand", "h", "sensor", "azimuth"]],
                          left_on="config", right_index=True)
-    tr["couverture"] = tr["F"] / inst.W
-    print(f"\nTrace du glouton à B = {B:g} (solution retenue : {sol.source}) :")
-    print(tr[["etape", "cand", "h", "capteur", "azimut", "ouvre_support", "cout_marginal",
-              "gain", "depense", "couverture"]].round(3).to_string(index=False))
+    tr["coverage"] = tr["F"] / inst.W
+    print(f"\nGreedy trace at B = {B:g} (selected solution: {sol.source}):")
+    print(tr[["step", "cand", "h", "sensor", "azimuth", "opens_support", "marginal_cost",
+              "gain", "spent", "coverage"]].round(3).to_string(index=False))
     print(f"\n-> {out}")
 
 

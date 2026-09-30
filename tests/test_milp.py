@@ -1,4 +1,4 @@
-"""Tests de la décomposition par coupes sous-modulaires : optimum exact sur instances jouets."""
+"""Tests of the decomposition by submodular cuts: exact optimum on toy instances."""
 import numpy as np
 import pytest
 
@@ -11,8 +11,8 @@ from tests.test_greedy import brute_force, make, random_instance
 @pytest.mark.parametrize("seed", range(8))
 @pytest.mark.parametrize("budget", [2.0, 4.0, 7.0, 12.0])
 @pytest.mark.parametrize("n_groups", [1, 5, 20])
-def test_optimum_exact(seed, budget, n_groups):
-    """Convergence vers l'optimum de la force brute, encadré par [LB, UB], quel que soit le découpage."""
+def test_exact_optimum(seed, budget, n_groups):
+    """Convergence to the brute-force optimum, bracketed by [LB, UB], whatever the partition."""
     inst = random_instance(seed)
     groups = np.arange(inst.A.shape[1]) % n_groups
     opt = brute_force(inst, budget)
@@ -24,8 +24,8 @@ def test_optimum_exact(seed, budget, n_groups):
 
 
 @pytest.mark.parametrize("seed", range(5))
-def test_coupe_valide(seed):
-    """F_g(T) ≤ F_g(S) + Σ_{j∈T∖S} ρ_gj(S) pour tous S, T et chaque bloc g."""
+def test_valid_cut(seed):
+    """F_g(T) ≤ F_g(S) + Σ_{j∈T∖S} ρ_gj(S) for every S, T and each block g."""
     inst = random_instance(seed)
     rng = np.random.default_rng(seed)
     groups = np.arange(inst.A.shape[1]) % 4
@@ -42,8 +42,8 @@ def test_coupe_valide(seed):
         assert np.all(C @ z <= rhs + 1e-9)
 
 
-def test_bat_le_verrouillage_de_hauteur():
-    """Là où le glouton au ratio verrouille le mât de 4 m, l'optimum certifié prend 10 m."""
+def test_beats_the_height_lock_in():
+    """Where the ratio greedy locks in the 4 m mast, the certified optimum takes 10 m."""
     P = np.array([[1, 0, 0], [1, 1, 1]], dtype=float)
     inst = make(P, support=[0, 1], site=[0, 0], a=[0.1, 3.0], f=[0.1, 0.1])
     assert ratio_greedy(inst, 10.0).value == pytest.approx(1.0)
@@ -51,7 +51,7 @@ def test_bat_le_verrouillage_de_hauteur():
     assert list(m.T) == [1] and m.value == pytest.approx(3.0)
 
 
-def test_graines_ne_changent_pas_l_optimum():
+def test_seeds_do_not_change_the_optimum():
     inst = random_instance(3)
     groups = np.arange(20) % 5
     seeds = [greedy(inst, b).T for b in (2.0, 7.0, 12.0)]
@@ -60,17 +60,17 @@ def test_graines_ne_changent_pas_l_optimum():
     assert a.value == pytest.approx(b.value)
 
 
-def test_structurel_capacite_et_hauteur():
-    """Les lignes (C1)–(C4) rejettent deux hauteurs au même endroit et deux radars par support."""
+def test_structural_capacity_and_height():
+    """The rows (C1)-(C4) reject two heights at the same location and two radars per support."""
     inst = make(np.eye(3), support=[0, 0, 1], kind=[1, 1, 0], site=[0, 0], a=[1, 1, 1], f=[1, 1])
     M, lo, hi = structural(inst, 100.0)
     ok = lambda x, y: np.all(M @ np.concatenate([x, y]) <= hi + 1e-9)
     assert ok([1, 0, 0], [1, 0])
-    assert not ok([1, 1, 0], [1, 0])        # (C4) deux radars sur le support 0
-    assert not ok([1, 0, 1], [1, 1])        # (C3) deux hauteurs sur l'emplacement 0
+    assert not ok([1, 1, 0], [1, 0])        # (C4) two radars on support 0
+    assert not ok([1, 0, 1], [1, 1])        # (C3) two heights at location 0
 
 
-def test_blocs_spatiaux():
+def test_spatial_blocks():
     rows = np.array([0, 0, 9, 10, 25]); cols = np.array([0, 15, 9, 0, 25])
     g = spatial_blocks(rows, cols, 10)
     assert g[0] == g[2] and len(set(g)) == 4

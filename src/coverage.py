@@ -1,10 +1,10 @@
 """
-src/coverage.py — Matrice de couverture du MCLP.
+src/coverage.py: coverage matrix of the MCLP.
 
-Configuration i = (position, hauteur, capteur, azimut) ; cellule j = pixel de sol d'une zone
-de couverture pondérée. A[i, j] = P_det de i sur j (creuse : P < p_min -> 0, perte mesurée).
+Configuration j = (position, height, sensor, azimuth); cell i = ground pixel of a weighted
+coverage zone. A[j, i] = P_det of j on i (sparse: P < p_min -> 0, measured loss).
 
-Sorties : A.npz (CSR), configs.csv, cellules.npz, p_max.tif
+Outputs : A.npz (CSR), configs.csv, cells.npz, p_max.tif
 Usage   : python -m src.coverage
 """
 from __future__ import annotations
@@ -25,30 +25,30 @@ from src.viewshed import compute_tau, prepare_surfaces, to_pixel
 
 
 # =============================================================================
-# Étape 1 — Cellules pondérées : zones de couverture rastérisées, sol uniquement
+# Step 1: weighted cells: rasterized coverage zones, ground only
 # =============================================================================
 def weighted_cells(s, cover: gpd.GeoDataFrame):
     g = s.grid
     zone = rasterize(((geom, i + 1) for i, geom in enumerate(cover.geometry)),
                      out_shape=(g.height, g.width),
                      transform=from_origin(g.xmin, g.ymax, g.res, g.res),
-                     fill=0, dtype="int32")                    # règle du centre de pixel
-    sol = s.z_opaque < s.z_tgt                                   # un intrus peut s'y tenir
-    rows, cols = np.nonzero((zone > 0) & sol)
+                     fill=0, dtype="int32")                    # pixel-centre rule
+    ground = s.z_opaque < s.z_tgt                                # an intruder can stand there
+    rows, cols = np.nonzero((zone > 0) & ground)
     z = zone[rows, cols] - 1
-    w = cover["poids"].to_numpy(float)[z] * g.res ** 2
+    w = cover["weight"].to_numpy(float)[z] * g.res ** 2
 
     chk = pd.DataFrame({
-        "zone": cover["source"], "poids": cover["poids"],
-        "surface_poly_m2": cover.area.round(0),
-        "px_rasterises": [int((zone == i + 1).sum()) for i in range(len(cover))],
-        "px_retenus": np.bincount(z, minlength=len(cover)),
+        "zone": cover["source"], "weight": cover["weight"],
+        "polygon_area_m2": cover.area.round(0),
+        "rasterized_px": [int((zone == i + 1).sum()) for i in range(len(cover))],
+        "kept_px": np.bincount(z, minlength=len(cover)),
     })
     return rows, cols, z, w, chk
 
 
 # =============================================================================
-# Étape 2 — Géométrie restreinte aux cellules (évite de calculer toute la grille)
+# Step 2: geometry restricted to the cells (avoids computing the whole grid)
 # =============================================================================
 def cell_geometry(s, rows, cols, r0: int, c0: int, z_obs: float) -> Geometry:
     res = s.grid.res
@@ -58,7 +58,7 @@ def cell_geometry(s, rows, cols, r0: int, c0: int, z_obs: float) -> Geometry:
 
 
 # =============================================================================
-# Étape 3 — Construction de la matrice
+# Step 3: building the matrix
 # =============================================================================
 def build_matrix(s, cand, rows, cols, w, cfg):
     cams, radars, azs, tilts = load_sensors(cfg)
@@ -69,7 +69,7 @@ def build_matrix(s, cand, rows, cols, w, cfg):
 
     for _, c in cand.iterrows():
         r0, c0 = to_pixel(s.grid, c.geometry.x, c.geometry.y)
-        for h in map(float, c["hauteurs_m"].split(",")):
+        for h in map(float, c["heights_m"].split(",")):
             z_obs = c["z_support"] + h
             tau = compute_tau(s, c.geometry.x, c.geometry.y, z_obs, cfg)[rows, cols]
             g = cell_geometry(s, rows, cols, r0, c0, z_obs)
@@ -91,10 +91,10 @@ def build_matrix(s, cand, rows, cols, w, cfg):
                 indptr.append(indptr[-1] + nz.size)
                 meta.append({"config": len(meta), "cand": c["id"], "support": c["support"],
                              "h_vegetation": c["h_vegetation"], "h": h,
-                             "capteur": name, "azimut": az, "inclinaison": tilt,
-                             "cout_support": c["cout_base"] + c["cout_par_m"] * h,
-                             "cout_capteur": cost,
-                             "couv_w": float(w[nz] @ p[nz])})
+                             "sensor": name, "azimuth": az, "tilt": tilt,
+                             "support_cost": c["cost_base"] + c["cost_per_m"] * h,
+                             "sensor_cost": cost,
+                             "cov_w": float(w[nz] @ p[nz])})
 
     A = sparse.csr_matrix((np.concatenate(data), np.concatenate(idx), np.asarray(indptr)),
                           shape=(len(meta), rows.size))
@@ -102,57 +102,57 @@ def build_matrix(s, cand, rows, cols, w, cfg):
 
 
 # =============================================================================
-# Étape 4 — Orchestration, contrôles, diagnostics
+# Step 4: orchestration, checks, diagnostics
 # =============================================================================
 def main() -> None:
     cfg = load_config()
     s = prepare_surfaces(cfg)
-    cover = gpd.read_file(ROOT / cfg["site"]["output_gpkg"], layer="couverture")
+    cover = gpd.read_file(ROOT / cfg["site"]["output_gpkg"], layer="coverage")
     cand = gpd.read_file(ROOT / cfg["candidates"]["output"])
     out = ROOT / cfg["coverage"]["out_dir"]
     out.mkdir(parents=True, exist_ok=True)
 
     rows, cols, z, w, chk = weighted_cells(s, cover)
     W = w.sum()
-    print("Contrôle de rastérisation des zones :")
+    print("Rasterization check of the zones:")
     print(chk.to_string(index=False))
-    print(f"\n{rows.size:,} cellules, poids total W = {W:,.0f}\n")
+    print(f"\n{rows.size:,} cells, total weight W = {W:,.0f}\n")
 
     t0 = time.time()
     A, df, n_empty, lost = build_matrix(s, cand, rows, cols, w, cfg)
-    df["couv_frac"] = df["couv_w"] / W
-    print(f"{len(df):,} configurations utiles, {n_empty} écartées (aucune couverture) "
-          f"— {time.time() - t0:.0f} s")
-    print(f"A : {A.shape[0]:,} × {A.shape[1]:,}, {A.nnz:,} non nuls "
-          f"(densité {A.nnz / np.prod(A.shape):.1%})")
-    print(f"Perte due au seuil p_min = {cfg['coverage']['p_min']} : "
-          f"{100 * lost:.3f} % de la couverture pondérée\n")
+    df["cov_frac"] = df["cov_w"] / W
+    print(f"{len(df):,} useful configurations, {n_empty} discarded (no coverage) "
+          f"in {time.time() - t0:.0f} s")
+    print(f"A: {A.shape[0]:,} × {A.shape[1]:,}, {A.nnz:,} non-zeros "
+          f"(density {A.nnz / np.prod(A.shape):.1%})")
+    print(f"Loss due to the threshold p_min = {cfg['coverage']['p_min']}: "
+          f"{100 * lost:.3f} % of the weighted coverage\n")
 
-    print("Part du poids couverte par UNE configuration (Σ w·P / W) :")
-    print(df.groupby("capteur")["couv_frac"]
+    print("Share of the weight covered by ONE configuration (Σ w·P / W):")
+    print(df.groupby("sensor")["cov_frac"]
             .describe(percentiles=[0.5, 0.9])[["count", "50%", "90%", "max"]].round(3))
-    print("\nMédiane par support × capteur :")
-    print(df.pivot_table(index="support", columns="capteur", values="couv_frac",
+    print("\nMedian by support × sensor:")
+    print(df.pivot_table(index="support", columns="sensor", values="cov_frac",
                          aggfunc="median").round(3))
-    print("\n10 meilleures configurations isolées :")
-    print(df.nlargest(10, "couv_frac")[["cand", "support", "h", "capteur", "azimut", "inclinaison",
-                                        "cout_support", "cout_capteur", "couv_frac"]]
+    print("\n10 best single configurations:")
+    print(df.nlargest(10, "cov_frac")[["cand", "support", "h", "sensor", "azimuth", "tilt",
+                                       "support_cost", "sensor_cost", "cov_frac"]]
             .round(3).to_string(index=False))
 
-    # Meilleure configuration unique par cellule : où le site est-il structurellement mal vu ?
+    # Best single configuration per cell: where is the site structurally poorly seen?
     p_max = np.asarray(A.max(axis=0).todense()).ravel()
     grid_p = np.full(s.z_tgt.shape, np.nan)
     grid_p[rows, cols] = p_max
     write_raster(out / "p_max.tif", grid_p, s.grid)
-    faible = p_max < 0.5
-    print(f"\nCellules dont la meilleure configuration donne P < 0,5 : "
-          f"{100 * faible.mean():.1f} % des cellules, {100 * w[faible].sum() / W:.1f} % du poids")
+    weak = p_max < 0.5
+    print(f"\nCells whose best configuration gives P < 0.5: "
+          f"{100 * weak.mean():.1f} % of the cells, {100 * w[weak].sum() / W:.1f} % of the weight")
     print(pd.Series(p_max).groupby(cover["source"].to_numpy()[z])
             .agg(["median", lambda x: (x < 0.5).mean()])
-            .set_axis(["p_max médiane", "part < 0,5"], axis=1).round(3))
+            .set_axis(["median p_max", "share < 0.5"], axis=1).round(3))
 
     sparse.save_npz(out / "A.npz", A)
-    np.savez(out / "cellules.npz", rows=rows, cols=cols, zone=z, w=w)
+    np.savez(out / "cells.npz", rows=rows, cols=cols, zone=z, w=w)
     df.to_csv(out / "configs.csv", index=False)
     print(f"\n-> {out}")
 

@@ -1,11 +1,11 @@
 """
-src/rasters.py — Rasters de base (MNT, MNS, hauteurs, végétation) sur la grille du site.
+src/rasters.py: base rasters (DTM, DSM, heights, vegetation) on the site grid.
 
-Entrées : tuiles LAZ (data/raw), grid.yaml (produit par src.site).
-Sorties : GeoTIFF alignés sur la grille dans data/processed/rasters.
+Inputs  : LAZ tiles (data/raw), grid.yaml (produced by src.site).
+Outputs : GeoTIFFs aligned on the grid in data/processed/rasters.
 
-Méthode : lecture des tuiles par blocs (laspy), accumulation par pixel (numpy),
-          puis construction des produits. Mémoire constante quel que soit le nombre de points.
+Method  : tiles are read in chunks (laspy), accumulated per pixel (numpy),
+          then the products are built. Constant memory whatever the number of points.
 
 Usage   : python -m src.rasters
 """
@@ -30,7 +30,7 @@ NODATA = -9999.0
 
 
 # =============================================================================
-# Étape 1 — Grille et indexation des pixels
+# Step 1: grid and pixel indexing
 # =============================================================================
 def load_grid(path: Path) -> Grid:
     with open(path, encoding="utf-8") as f:
@@ -40,10 +40,10 @@ def load_grid(path: Path) -> Grid:
 
 
 def pixel_index(x: np.ndarray, y: np.ndarray, grid: Grid):
-    """Indice de pixel à plat (ligne * largeur + colonne) et masque des points dans la grille.
+    """Flat pixel index (row * width + column) and mask of the points inside the grid.
 
-    Convention raster : ligne 0 en haut (ymax), colonne 0 à gauche (xmin).
-    Un point sur le bord gauche/haut d'un pixel appartient à ce pixel.
+    Raster convention: row 0 at the top (ymax), column 0 on the left (xmin).
+    A point on the left/top edge of a pixel belongs to that pixel.
     """
     col = np.floor((x - grid.xmin) / grid.res).astype(np.int64)
     row = np.floor((grid.ymax - y) / grid.res).astype(np.int64)
@@ -52,11 +52,11 @@ def pixel_index(x: np.ndarray, y: np.ndarray, grid: Grid):
 
 
 # =============================================================================
-# Étape 2 — Accumulateur de statistiques par pixel
+# Step 2: per-pixel statistics accumulator
 # =============================================================================
 @dataclass
 class Accumulator:
-    """Statistiques de Z par pixel, mises à jour bloc par bloc."""
+    """Statistics of Z per pixel, updated chunk by chunk."""
     n_pixels: int
     count: np.ndarray = field(init=False)
     zsum: np.ndarray = field(init=False)
@@ -88,7 +88,7 @@ class Accumulator:
 
 
 # =============================================================================
-# Étape 3 — Lecture des tuiles par blocs
+# Step 3: reading the tiles in chunks
 # =============================================================================
 def tile_intersects(path: str, grid: Grid) -> bool:
     with laspy.open(path) as f:
@@ -100,15 +100,15 @@ def tile_intersects(path: str, grid: Grid) -> bool:
 def accumulate(paths: list[str], grid: Grid, classes: dict[str, list[int]],
                chunk_size: int) -> tuple[dict[str, Accumulator], np.ndarray]:
     n = grid.width * grid.height
-    groups = [g for g in classes if g != "bruit"]
-    acc = {g: Accumulator(n) for g in groups + ["surface"]}   # surface = tout sauf bruit
-    autre_multi = np.zeros(n, np.int32)   # points "autre" issus d'impulsions à retours multiples
-    first_all = np.zeros(n, np.int32)   # premiers retours, hors bruit
-    first_sol = np.zeros(n, np.int32)   # premiers retours classés sol
+    groups = [g for g in classes if g != "noise"]
+    acc = {g: Accumulator(n) for g in groups + ["surface"]}   # surface = everything but noise
+    other_multi = np.zeros(n, np.int32)   # "other" points from pulses with multiple returns
+    first_all = np.zeros(n, np.int32)     # first returns, noise excluded
+    first_ground = np.zeros(n, np.int32)  # first returns classified as ground
 
     for path in paths:
         if not tile_intersects(path, grid):
-            print(f"  {Path(path).name} : hors grille, ignorée")
+            print(f"  {Path(path).name}: outside the grid, skipped")
             continue
         t0, kept = time.time(), 0
         with laspy.open(path) as f:
@@ -122,25 +122,25 @@ def accumulate(paths: list[str], grid: Grid, classes: dict[str, list[int]],
                 for g in groups:
                     m = np.isin(cls, classes[g])
                     acc[g].add(idx[m], z[m])
-                m = ~np.isin(cls, classes["bruit"])
+                m = ~np.isin(cls, classes["noise"])
                 acc["surface"].add(idx[m], z[m])
-                m = np.isin(cls, classes["autre"]) & (nret > 1)
-                autre_multi += np.bincount(idx[m], minlength=n).astype(np.int32)
+                m = np.isin(cls, classes["other"]) & (nret > 1)
+                other_multi += np.bincount(idx[m], minlength=n).astype(np.int32)
                 rnum = np.asarray(pts.return_number)[inside]
-                first = (rnum == 1) & ~np.isin(cls, classes["bruit"])
+                first = (rnum == 1) & ~np.isin(cls, classes["noise"])
                 first_all += np.bincount(idx[first], minlength=n).astype(np.int32)
-                m = first & np.isin(cls, classes["sol"])
-                first_sol += np.bincount(idx[m], minlength=n).astype(np.int32)
-        print(f"  {Path(path).name} : {kept:,} points dans la grille ({time.time() - t0:.0f} s)")
-    return acc, autre_multi, first_all, first_sol
+                m = first & np.isin(cls, classes["ground"])
+                first_ground += np.bincount(idx[m], minlength=n).astype(np.int32)
+        print(f"  {Path(path).name}: {kept:,} points in the grid ({time.time() - t0:.0f} s)")
+    return acc, other_multi, first_all, first_ground
 
 
 
 # =============================================================================
-# Étape 4 — Construction des produits
+# Step 4: building the products
 # =============================================================================
 def fill_holes(arr: np.ndarray, max_dist_px: int) -> tuple[np.ndarray, np.ndarray]:
-    """Comble les pixels vides par interpolation (inverse distance). Retourne (raster, masque_comblé)."""
+    """Fills empty pixels by interpolation (inverse distance). Returns (raster, filled_mask)."""
     valid = ~np.isnan(arr)
     filled = fillnodata(np.where(valid, arr, 0).astype(np.float32),
                         mask=valid.astype(np.uint8), max_search_distance=max_dist_px,
@@ -151,40 +151,40 @@ def fill_holes(arr: np.ndarray, max_dist_px: int) -> tuple[np.ndarray, np.ndarra
     return filled, ~valid & ~still_empty
 
 
-def build_products(acc: dict[str, Accumulator], autre_multi: np.ndarray,
-                   first_all: np.ndarray, first_sol: np.ndarray,
+def build_products(acc: dict[str, Accumulator], other_multi: np.ndarray,
+                   first_all: np.ndarray, first_ground: np.ndarray,
                    grid: Grid, max_dist_px: int) -> dict[str, np.ndarray]:
     shape = (grid.height, grid.width)
     r = lambda a: a.reshape(shape)
 
-    mnt, mnt_filled = fill_holes(r(acc["sol"].mean()), max_dist_px)
-    mns, mns_filled = fill_holes(r(acc["surface"].max()), max_dist_px)
-    mns = np.fmax(mns, mnt)                       # la surface n'est jamais sous le sol
+    dtm, dtm_filled = fill_holes(r(acc["ground"].mean()), max_dist_px)
+    dsm, dsm_filled = fill_holes(r(acc["surface"].max()), max_dist_px)
+    dsm = np.fmax(dsm, dtm)                       # the surface is never below the ground
 
-    bati = r(acc["batiment"].count) > 0
-    h_bati = np.where(bati, r(acc["batiment"].max()) - mnt, 0.0)
-    autre = r(acc["autre"].count) > 0
-    h_autre = np.where(autre, np.clip(r(acc["autre"].max()) - mnt, 0, None), 0.0)
+    building = r(acc["building"].count) > 0
+    h_building = np.where(building, r(acc["building"].max()) - dtm, 0.0)
+    other = r(acc["other"].count) > 0
+    h_other = np.where(other, np.clip(r(acc["other"].max()) - dtm, 0, None), 0.0)
     with np.errstate(invalid="ignore", divide="ignore"):
-        frac_multi = np.where(autre, r(autre_multi) / r(acc["autre"].count), np.nan)
+        frac_multi = np.where(other, r(other_multi) / r(acc["other"].count), np.nan)
 
     return {
-        "mnt": mnt,
-        "mns": mns,
-        "mnt_comble": mnt_filled.astype(np.uint8),
-        "bati_mask": bati.astype(np.uint8),
-        "bati_h": np.clip(h_bati, 0, None),
-        "autre_h": h_autre,
-        "autre_frac_multi": frac_multi,
-        "densite": r(acc["surface"].count).astype(np.float32) / grid.res**2,
-        "gap_fraction": (r(first_sol) + 0.5) / (r(first_all) + 1.0),
-        "n_premiers": r(first_all).astype(np.float32)
+        "dtm": dtm,
+        "dsm": dsm,
+        "dtm_filled": dtm_filled.astype(np.uint8),
+        "building_mask": building.astype(np.uint8),
+        "building_h": np.clip(h_building, 0, None),
+        "other_h": h_other,
+        "other_multi_frac": frac_multi,
+        "density": r(acc["surface"].count).astype(np.float32) / grid.res**2,
+        "gap_fraction": (r(first_ground) + 0.5) / (r(first_all) + 1.0),
+        "n_first": r(first_all).astype(np.float32)
     }
 
 
 
 # =============================================================================
-# Étape 5 — Écriture GeoTIFF
+# Step 5: GeoTIFF writing
 # =============================================================================
 def write_raster(path: Path, arr: np.ndarray, grid: Grid) -> None:
     is_mask = arr.dtype == np.uint8
@@ -200,18 +200,20 @@ def write_raster(path: Path, arr: np.ndarray, grid: Grid) -> None:
 
 
 # =============================================================================
-# Étape 6 — Orchestration et contrôle qualité
+# Step 6: orchestration and quality control
 # =============================================================================
 def main() -> None:
     cfg = load_config()
     rc = cfg["rasters"]
     grid = load_grid(ROOT / cfg["site"]["grid_yaml"])
     paths = sorted(p for p in glob.glob(str(ROOT / rc["tiles_glob"]))
-                   if not p.lower().endswith(".copc.laz"))      # ignore les index QGIS
-    print(f"Grille {grid.width} x {grid.height} px à {grid.res} m, {len(paths)} tuiles")
+                   if not p.lower().endswith(".copc.laz"))      # skips the QGIS indexes
+    print(f"Grid {grid.width} x {grid.height} px at {grid.res} m, {len(paths)} tiles")
 
-    acc, autre_multi, first_all, first_sol = accumulate(paths, grid, rc["classes"], rc["chunk_size"])
-    products = build_products(acc, autre_multi, first_all, first_sol, grid, rc["fill_max_distance_px"])
+    acc, other_multi, first_all, first_ground = accumulate(paths, grid, rc["classes"],
+                                                           rc["chunk_size"])
+    products = build_products(acc, other_multi, first_all, first_ground, grid,
+                              rc["fill_max_distance_px"])
 
     out_dir = ROOT / rc["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -219,21 +221,21 @@ def main() -> None:
         write_raster(out_dir / f"{name}.tif", arr, grid)
 
     n = grid.width * grid.height
-    print("\nContrôle qualité")
-    print(f"  pixels sans sol mesuré (MNT comblé) : {100 * products['mnt_comble'].mean():.1f} %")
-    print(f"  pixels bâtiment                     : {100 * products['bati_mask'].mean():.1f} %")
-    print(f"  MNT min / max                       : {np.nanmin(products['mnt']):.1f} / {np.nanmax(products['mnt']):.1f} m")
-    print(f"  hauteur bâti max                    : {np.nanmax(products['bati_h']):.1f} m")
-    print(f"  densité médiane                     : {np.median(products['densite']):.1f} pts/m²")
-    print(f"  pixels encore vides (MNT)           : {int(np.isnan(products['mnt']).sum())} / {n}")
-    gap, h_veg = products["gap_fraction"], products["autre_h"]
-    bati, sol_nu = products["bati_mask"] == 1, (h_veg < 0.3) & (products["bati_mask"] == 0)
+    print("\nQuality control")
+    print(f"  pixels without measured ground (filled DTM): {100 * products['dtm_filled'].mean():.1f} %")
+    print(f"  building pixels                            : {100 * products['building_mask'].mean():.1f} %")
+    print(f"  DTM min / max                              : {np.nanmin(products['dtm']):.1f} / {np.nanmax(products['dtm']):.1f} m")
+    print(f"  max building height                        : {np.nanmax(products['building_h']):.1f} m")
+    print(f"  median density                             : {np.median(products['density']):.1f} pts/m²")
+    print(f"  pixels still empty (DTM)                   : {int(np.isnan(products['dtm']).sum())} / {n}")
+    gap, h_veg = products["gap_fraction"], products["other_h"]
+    building, bare = products["building_mask"] == 1, (h_veg < 0.3) & (products["building_mask"] == 0)
     q = lambda a: np.round(np.percentile(a, [10, 50, 90]), 2)
-    print(f"  gap fraction p10/50/90 — sol nu     : {q(gap[sol_nu])}")
-    print(f"  gap fraction p10/50/90 — végétation : {q(gap[h_veg > 2])}")
-    print(f"  gap fraction p10/50/90 — bâtiments  : {q(gap[bati])}")
-    print(f"  premiers retours / px (médiane)     : {np.median(products['n_premiers']):.0f}")
-    print(f"Rasters écrits dans {out_dir}")
+    print(f"  gap fraction p10/50/90, bare ground        : {q(gap[bare])}")
+    print(f"  gap fraction p10/50/90, vegetation         : {q(gap[h_veg > 2])}")
+    print(f"  gap fraction p10/50/90, buildings          : {q(gap[building])}")
+    print(f"  first returns / px (median)                : {np.median(products['n_first']):.0f}")
+    print(f"Rasters written to {out_dir}")
 
 
 if __name__ == "__main__":

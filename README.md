@@ -1,173 +1,162 @@
-# Surveillance optimale d'un site à partir de données LiDAR aériennes
+# Optimal surveillance of a site from airborne LiDAR data
 
-**Placer caméras et radars pour qu'un intrus qui connaît le dispositif soit détecté, et à temps.**
-Nuage LiDAR 3D, recherche opérationnelle certifiée, deep learning mesuré, boucle adversariale exacte.
+**Placing cameras and radars so that an intruder who knows the layout is detected, and in time.**
+3D LiDAR point cloud, certified operations research, measured deep learning, exact adversarial loop.
 
-> **Site fictif.** Le site protégé, ses zones et ses actifs sont inventés et superposés à un secteur urbain
-> quelconque de Montréal. Aucune information sur un site réel n'est produite ni publiée. Ce choix est
-> délibéré : publier des cartes d'angles morts d'un site réel sensible serait inacceptable.
+> **Fictitious site.** The protected site, its zones and its assets are made up and overlaid on an
+> arbitrary urban area. No information about a real sensitive site is produced or published.
 
-![Démo interactive : dispositif certifié, couloirs de l'intrus, zone où une détection arrive trop tard](figures/demo.png)
+## The problem
 
-## Le problème
+A limited budget, candidate positions (masts, roofs), two sensor types (orientable camera, 360° radar),
+or cameras only. The classic question: *how to best cover the critical zones?* It is a maximal covering
+location problem (MCLP).
 
-Un budget limité, 61 positions candidates (mâts, toits), deux types de capteurs (caméra orientable, radar
-360°), soit **4 151 configurations**. La question classique : *comment couvrir au mieux les zones
-critiques ?* C'est un problème de couverture maximale (MCLP).
+This project shows that this question is not enough and replaces it, in three stages, with the one a
+security engineer asks:
 
-Ce projet montre que cette question ne suffit pas et la remplace, en trois temps, par celle d'un ingénieur
-sûreté :
-
-| Question | Métrique | Ce qu'elle révèle |
+| Question | Metric | What it can hide |
 |---|---|---|
-| Le site est-il couvert ? | couverture pondérée F | rien sur le pire cas |
-| L'intrus sera-t-il détecté ? | p\*, détection garantie sur le couloir le moins surveillé | des couloirs aveugles à 68 % de couverture |
-| Sera-t-il détecté **à temps** ? | p̃\*, en ne comptant que les détections antérieures au temps de réponse | un dispositif « robuste » (p\* = 0,97) qui ne voit l'intrus qu'au contact du bâtiment |
+| Is the site covered? | weighted coverage F | nothing is said about the worst case |
+| Will the intruder be detected? | p\*, guaranteed detection on the least watched corridor | a blind corridor behind a high coverage |
+| Will they be detected **in time**? | p̃\*, counting only the detections earlier than the response time | a "robust" layout that only sees the intruder in contact with the target |
 
-## Résultats
+![Example](figures/streamlit_exemple.png)
 
-1. **Couvrir n'est pas protéger.** 68 % de couverture peuvent laisser un couloir entièrement aveugle. À
-   budget égal, l'optimum de couverture gagne 0,6 point en déplaçant un radar, et perd **67 points** de
-   détection garantie.
-2. **Détecter n'est pas interrompre.** Le temps d'intrusion minimal est de 30 s (un coin du bâtiment critique
-   est à 1,2 m de la clôture). **Démontré** : au-delà de ce temps de réponse, aucun dispositif ne protège,
-   quel que soit le budget. La solution à deux radars (p\* = 0,97) tombe à 0 dès 2,5 s de temps de réponse.
-3. **La boucle optimiseur ↔ intrus peut être exacte.** Écrite comme une génération de contraintes, l'intrus
-   servant d'oracle, elle converge et **certifie** : le seuil de 12,8 unités pressenti par NSGA-II est
-   prouvé ; exiger une détection à temps coûte **15,4 au lieu de 28,6** pour le meilleur point du front.
-4. **Le retard est le levier que les capteurs ne remplacent pas.** Avec clôture et portails à 120 s, une
-   réponse en 2 minutes est couverte pour 15,4 unités ; sans retard, elle est impossible. Renforcer la
-   clôture seule ne rapporte que 2,7 s : l'intrus passe par un portail.
-5. **Qu'aurait coûté de se tromper ?** Le feuillage d'été et un intrus qui court suffisent à casser les
-   décisions nominales ; les réparer coûte de 0,4 à 3,1 unités. Protocole et prédictions préenregistrés ;
-   une prédiction a été réfutée et publiée telle quelle.
-6. **Le deep learning, là où il sert.** Le goulot de calcul prévu n'existait pas (le U-Net était 2,6 fois
-   plus lent que le calcul exact). Déplacé sur un vrai problème, un modèle physique simple bat les U-Net, et
-   la contribution durable est une **pyramide log-polaire 38 fois moins chère** que l'horizon exact.
-
-| Coût minimal certifié selon l'exigence | Le retard rend possibles les réponses lentes |
-|---|---|
-| ![Coût minimal certifié](figures/cout_robuste.png) | ![Retard × temps de réponse](figures/frontiere_retard.png) |
-
-## Démarche
+## Approach
 
 ```mermaid
 flowchart LR
-    L[Nuage LiDAR classé] --> R[Rasters : MNT, bâti,<br/>végétation, fraction de trouée]
-    R --> V[Visibilité exacte τ<br/>bâti opaque, végétation<br/>semi-transparente]
-    V --> C[Modèles caméra / radar<br/>4 151 configurations]
-    C --> O[Couverture : glouton,<br/>coupes sous-modulaires, NSGA-II]
-    C --> I[Intrus : pire couloir p*,<br/>détection opportune p̃*]
-    O --> B[Boucle adversariale<br/>exacte et certifiée]
+    L[Classified LiDAR<br/>point cloud] --> R[Rasters: DTM, buildings,<br/>vegetation, gap fraction]
+    R --> V[Exact visibility τ<br/>opaque buildings,<br/>semi-transparent vegetation]
+    V --> C[Camera / radar models<br/>sensor configurations]
+    C --> O[Coverage: greedy,<br/>submodular cuts, NSGA-II]
+    C --> I[Intruder: worst corridor p*,<br/>timely detection p̃*]
+    O --> B[Exact and certified<br/>adversarial loop]
     I --> B
-    B --> S[Sensibilité par<br/>regret de décision]
-    B --> D[Démo Streamlit]
-    V -.-> M[Modèle de substitution<br/>U-Net, pyramide log-polaire]
+    B --> S[Sensitivity by<br/>decision regret]
+    B --> D[Streamlit demo]
+    V -.-> M[Surrogate model<br/>U-Net, log-polar pyramid]
 ```
 
-| Semaine | Contenu |
+| Phase | Content |
 |---|---|
-| 1 | Site, rasters LiDAR, validation du MNT (PDAL, MRNF), positions candidates |
-| 2 | Moteur de visibilité exact (Amanatides & Woo), végétation par Beer-Lambert, capteurs, validation |
-| 3 | Couverture maximale : glouton, optimum certifié par coupes sous-modulaires |
-| 4 | Intrus : pire couloir (union-find), exposition, NSGA-II coût / couverture / pire cas |
-| 5–6 | Modèle de substitution : références physiques, U-Net, pyramide log-polaire, validation par la décision |
-| 7 | Détection opportune (EASI), boucle adversariale exacte, prix de la robustesse, sensibilité |
-| 8 | Démo interactive, article |
+| 1 | Site, LiDAR rasters, DTM validation (PDAL, MRNF), candidate positions |
+| 2 | Exact visibility engine (Amanatides & Woo), vegetation by Beer-Lambert, sensors, validation |
+| 3 | Maximal coverage: greedy, optimum certified by submodular cuts |
+| 4 | Intruder: worst corridor (union-find), exposure, NSGA-II cost / coverage / worst case |
+| 5-6 | Surrogate model: physical baselines, U-Net, log-polar pyramid, validation by the decision |
+| 7 | Timely detection (EASI), exact adversarial loop, price of robustness, sensitivity |
+| 8 | Interactive demo |
 
-## Rigueur
+The mathematical formulation and the proofs are in [`docs/formulation.md`](docs/formulation.md).
 
-- **Un arbitre exact plutôt qu'un outil de référence.** Le moteur de visibilité était en désaccord avec
-  `gdal_viewshed` ; un arbitre exact a montré que GDAL surestimait la zone visible d'environ 15 %.
-- **Certifier plutôt que croire.** Chaque optimum est encadré [borne inférieure, borne supérieure] ou prouvé ;
-  NSGA-II est validé contre ces bornes, la boucle adversariale contre une énumération exhaustive.
-- **Mesurer avant de construire.** Le goulot de calcul a été mesuré avant d'entraîner un réseau, et chaque
-  accélération de la boucle a été choisie sur une mesure.
-- **Préenregistrer.** Deux protocoles fixés avant calcul : l'un a transformé un succès apparent en faux positif
-  documenté, l'autre contient une prédiction réfutée. Les deux sont publiés.
-- **Tester.** 90 fonctions de test (pytest) : solutions analytiques, invariances, force brute, page de démo
-  exécutée de bout en bout.
+## Notebooks
 
-## Démarrage rapide
+The [`notebooks/`](notebooks) folder walks through each phase with the equations, short code examples and
+figures, on the site of [`data/site`](data/site). They are stored without outputs: run the chain first.
+
+| Notebook | Phase |
+|---|---|
+| [01_site_and_lidar_rasters](notebooks/01_site_and_lidar_rasters.ipynb) | the site drawn in QGIS, point cloud, DTM / DSM / buildings / vegetation, gap fraction |
+| [02_visibility_engine](notebooks/02_visibility_engine.ipynb) | exact ray traversal, optical depth τ, Beer-Lambert, analytical checks |
+| [03_sensor_models](notebooks/03_sensor_models.ipynb) | pinhole camera + TTPF, radar equation + Swerling I, detection maps |
+| [04_coverage_optimisation](notebooks/04_coverage_optimisation.ipynb) | MCLP, submodularity, greedy, certified optimum by submodular cuts |
+| [05_intruder](notebooks/05_intruder.ipynb) | intruder graph, corridor threshold p\*, exposure Λ, NSGA-II front |
+| [06_timely_detection_and_adversarial_loop](notebooks/06_timely_detection_and_adversarial_loop.ipynb) | remaining time d(v), T_min, constraint generation, certified minimal cost |
+| [07_surrogate_model](notebooks/07_surrogate_model.ipynb) | potential V, D4 symmetries, log-polar pyramid |
+
+## Rigour
+
+- **An exact referee rather than a reference tool.** The visibility engine is compared with `gdal_viewshed`
+  (`src.validation_viewshed`), and disagreements are settled by an exact ray traversal.
+- **Certify rather than believe.** Each optimum is bracketed [lower bound, upper bound] or proven; NSGA-II is
+  validated against these bounds, the adversarial loop against an exhaustive enumeration.
+- **Measure before building.** The computational bottleneck is measured before training a network.
+- **Preregister.** The sensitivity analysis and the validation of the surrogate by the decision follow
+  protocols fixed in `config.yaml` before computation.
+- **Test.** pytest: analytical solutions, invariances, brute force, demo page run end to end.
+
+## Quick start
 
 ```bash
 conda create -n lidar-project -c conda-forge python=3.11 \
     pdal python-pdal gdal laspy lazrs-python rasterio "geopandas>=1.0" "shapely>=2" \
     pyproj pyogrio pyyaml matplotlib numba "scipy>=1.9" pandas pytest pymoo scikit-learn joblib \
-    streamlit plotly
+    streamlit plotly jupyter
 conda activate lidar-project
-pip install torch                         # semaines 5–6 seulement (MPS sur Apple Silicon)
+pip install torch                         # surrogate model only
 python -m pytest tests                    # tests
-python -m streamlit run app.py            # démo (après la chaîne de calcul ci-dessous)
+python -m src.chain                       # computation chain (below)
+python -m streamlit run app.py            # demo, once the chain has run
 ```
 
-Lancer Streamlit par `python -m` garantit qu'il utilise le Python de l'environnement (et donc numba, scipy…),
-et non une autre installation présente sur la machine.
 
-**Données.** Les 4 tuiles LiDAR 2023 du MRNF (`23_2955039F08_DC`, `23_2955040F08_DC`, `23_2965039F08_DC`,
-`23_2965040F08_DC`, ≈ 1,3 Go) vont dans `data/raw/`, le MNT de référence du MRNF dans
-`data/external/mnt_mrnf.tif`. Le site est dessiné dans QGIS (`data/site/site.gpkg`). Les sorties de
-`data/processed/` ne sont pas versionnées : elles se régénèrent.
+**Data.** The 4 LiDAR tiles 2023 of the MRNF (≈ 1.3 GB) go in `data/raw/`, the reference DTM of the MRNF in
+`data/external/dtm_mrnf.tif` (DTM validation only). The site, `data/site/site.gpkg`, is drawn in QGIS, see
+[`docs/qgis_site_guide.md`](docs/qgis_site_guide.md). It is the only input of the repository: every other
+file (derived site products, rasters, matrices, solutions, figures) is produced by the chain.
 
-**Chaîne de calcul**, dans l'ordre (paramètres dans `config.yaml`, détail et durées dans le
-[journal](docs/journal.md#installation-et-reproduction)) :
+**Computation chain.** `python -m src.chain` runs every step in order, each one as `python -m <module>`,
+with the parameters of `config.yaml`, and stops at the first failure:
 
-| Étape | Commandes | Durée indicative |
-|---|---|---|
-| Site, rasters, validation | `src.site`, `src.rasters`, `src.validation`, `src.candidates` | quelques minutes |
-| Visibilité et couverture | `src.validation_viewshed`, `src.coverage` | quelques minutes |
-| Optimisation de la couverture | `src.greedy`, `src.milp`, `src.pareto`, `src.analyse` | ≈ 3 h 30 (certification) |
-| Intrus et NSGA-II | `src.intrusion`, `src.intrus`, `src.evaluation_intrus`, `src.nsga`, `src.analyse_nsga` | ≈ 15 min |
-| Modèle de substitution | `src.dataset_surrogate` … `src.catalogue_reduit` | ≈ 1 h 15 |
-| Détection opportune, boucle, sensibilité | `src.opportune`, `src.boucle`, `src.sensibilite` | ≈ 6 h 30 sur 2 cœurs |
+| Stage | Steps |
+|---|---|
+| Site, rasters, candidates | `site`, `rasters`, `candidates` |
+| Coverage and its optimisation | `coverage`, `greedy`, `milp`, `pareto`, `analysis` |
+| Intruder and NSGA-II | `intruder_domain`, `intruder`, `intruder_evaluation`, `nsga`, `nsga_analysis` |
+| Timely detection, loop, sensitivity | `timely`, `adversarial_loop`, `sensitivity` |
+| Optional: validation | `validation` (DTM against PDAL / MRNF), `validation_viewshed` (against GDAL) |
+| Optional: surrogate model (PyTorch) | `surrogate_dataset` ... `reduced_catalog`, `surrogate_metrics` |
 
-Chaque étape se lance par `python -m <module>`. Les figures se régénèrent sans recalcul par
-`python -m src.boucle figures` et `python -m src.sensibilite figures`.
+```bash
+python -m src.chain --list                          # the steps and their commands
+python -m src.chain --until coverage                # quick check of the site
+python -m src.chain --from milp                     # resume from a step
+python -m src.chain --with validation surrogate     # with the optional groups
+```
 
-## Structure du dépôt
+The certification steps (`milp`, `adversarial_loop`, `sensitivity`) take most of the time; their time limits
+are in `config.yaml` (`optimization.milp`, `loop`, `sensitivity`). The figures go to `figures/`, the
+tables to `data/processed/`.
+
+**Cameras only.** Set `sensors.cameras_only: true` in `config.yaml`, then run the chain from the coverage
+step (`python -m src.chain --from coverage`): no radar configuration is created, and every later step
+(optimisation, intruder, loop, sensitivity, surrogate catalog, demo) works with the cameras alone.
+
+## Repository structure
 
 ```
-├── app.py            démo Streamlit (affichage seulement)
-├── config.yaml       paramètres choisis ; aucune valeur calculée
-├── src/              un module par étape (visibilité, capteurs, optimisation, intrus, boucle, …)
-├── tests/            solutions analytiques, invariances, force brute, démo
+├── app.py            Streamlit demo (display only)
+├── config.yaml       chosen parameters; no computed value
+├── src/              one module per stage (visibility, sensors, optimisation, intruder, loop, ...);
+│                     src/chain.py runs them in order
+├── tests/            analytical solutions, invariances, brute force, demo
+├── notebooks/        one notebook per phase
 ├── docs/
-│   ├── journal.md      le détail semaine par semaine : choix, mesures, échecs, corrections
-│   ├── formulation.md  formulation mathématique et preuves
-│   └── article.md      synthèse en huit étapes
-├── figures/          figures versionnées
-└── data/             site dessiné (versionné) ; données brutes et sorties (non versionnées)
+│   ├── formulation.md      mathematical formulation and proofs
+│   ├── qgis_site_guide.md  drawing a site in QGIS
+│   └── project_brief.md    the brief the project started from
+├── figures/          figures produced by the chain
+└── data/             site/site.gpkg drawn in QGIS (versioned); raw data and outputs (not versioned)
 ```
 
-## Pour aller plus loin
+## Main limitations
 
-- [**Journal de bord**](docs/journal.md) : chaque semaine en détail, 60 choix méthodologiques justifiés,
-  limites connues.
-- [**Formulation**](docs/formulation.md) : modèles, propositions et preuves (couverture sous-modulaire,
-  couloir p\*, détection opportune, convergence de la boucle).
-- [**Article**](docs/article.md) : le projet raconté pour un lecteur pressé.
-- [**Autres sites**](docs/multisite.md) : la chaîne complète sur un site dessiné dans QGIS et rangé
-  n'importe où (`python -m src.multisite lancer <dossier>`), sorties dans `<dossier>/sorties`, et la
-  comparaison des sites.
+- **A single acquisition date** (November, leaf-off): optimistic transmittances for summer; foliage is only
+  simulated by a uniform factor.
+- **Standing, omniscient intruder at constant speed**; deterministic response time (simplified EASI).
+- **Relative costs**, not calibrated on real prices.
+- **Semi-transparency of the vegetation validated analytically**, not by field measurements.
+- **One-factor-at-a-time sensitivity**; optimum certified under the assumption of correlated detections
+  (max fusion), only bracketed under the independence assumption.
 
-## Limites principales
+## Possible follow-up
 
-- **Une seule date d'acquisition** (novembre, sans feuilles) : transmittances optimistes pour l'été ; le
-  feuillage n'est simulé que par un facteur uniforme.
-- **Intrus debout, omniscient, à vitesse constante** ; temps de réponse déterministe (EASI simplifié).
-- **Coûts relatifs**, non calibrés sur des prix réels.
-- **Semi-transparence de la végétation validée analytiquement**, pas par des mesures de terrain.
-- **Sensibilité un facteur à la fois** ; optimum certifié sous l'hypothèse de détections corrélées (fusion
-  max), seulement encadré sous l'hypothèse d'indépendance.
-
-La liste complète est dans le [journal](docs/journal.md#limites-connues).
-
-## Suite possible
-
-- **Décision robuste multi-scénarios** : un seul dispositif qui tient sous le feuillage d'été et face à un
-  intrus qui court ; la boucle s'y prête directement (un oracle d'intrus par scénario, un seul maître).
-- **Optimiser capteurs et retard ensemble**, en donnant un coût au renforcement de la clôture et des portails.
-- **Un second site de plusieurs km²**, où le modèle de substitution trouverait son point d'équilibre.
+- **Robust multi-scenario decision**: a single layout that holds under summer foliage and against a running
+  intruder; the loop lends itself to it directly (one intruder oracle per scenario, a single master).
+- **Optimise sensors and delay together**, by giving a cost to the reinforcement of the fence and the gates.
+- **A site of several km²**, where the surrogate model would reach its break-even point.
 
 ## Stack
 
@@ -176,5 +165,5 @@ Streamlit, plotly · pytest
 
 ---
 
-*Données : © Gouvernement du Québec, ministère des Ressources naturelles et des Forêts (MRNF), licence
-CC BY 4.0.*
+*Data: © Gouvernement du Québec, ministère des Ressources naturelles et des Forêts (MRNF), CC BY 4.0
+licence.*

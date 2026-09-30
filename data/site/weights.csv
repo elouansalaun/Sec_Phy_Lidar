@@ -1,0 +1,6 @@
+source,role,level,weight,area_m2,weight_x_area,objective_share_pct
+Core,approach,10,15.0,580.6,8709.0,54.6
+Building 1,approach,3,3.0,1487.4,4462.3,28.0
+Building 3,approach,3,2.0,529.7,1059.4,6.6
+Building 2,approach,3,2.0,435.1,870.3,5.5
+periphery,periphery,1,1.0,850.7,850.7,5.3

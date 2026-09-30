@@ -1,17 +1,17 @@
 """
-src/pareto.py — Front couverture / coût : glouton contre optimum certifié (étape 3.4).
+src/pareto.py: coverage / cost front: greedy against the certified optimum (step 3.4).
 
-Lit les sorties de src.greedy et src.milp, sans rien recalculer.
+Reads the outputs of src.greedy and src.milp, without recomputing anything.
 
-Figures dans optimisation.figures_dir (versionné), tableau dans optimisation.out_dir.
-  - front.png       : couverture en fonction du budget, glouton, meilleure solution et bande [LB, UB]
-  - ecarts.png      : ce que perd le glouton, et ce qui reste à certifier
-  - convergence.png : écart certifié au fil des itérations pour quelques budgets
-  - pareto.csv      : front par budget, rendement marginal, solutions non dominées
+Figures in optimization.figures_dir (versioned), table in optimization.out_dir.
+  - front.png       : coverage against budget, greedy, best solution and [LB, UB] band
+  - gaps.png        : what the greedy loses, and what remains to be certified
+  - convergence.png : certified gap over the iterations for a few budgets
+  - pareto.csv      : front per budget, marginal return, non-dominated solutions
 
-Monotonie : une solution réalisable pour B l'est aussi pour tout B' ≥ B, et une borne
-supérieure pour B' majore aussi l'optimum pour tout B ≤ B'. On resserre donc
-LB(B) = max_{B'≤B} LB(B') et UB(B) = min_{B'≥B} UB(B').
+Monotonicity: a solution feasible for B is also feasible for every B' ≥ B, and an upper
+bound for B' also bounds the optimum for every B ≤ B'. We therefore tighten
+LB(B) = max_{B'≤B} LB(B') and UB(B) = min_{B'≥B} UB(B').
 
 Usage : python -m src.pareto
 """
@@ -24,8 +24,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-# Palette de référence (skill dataviz) : identité par série, texte en encre neutre
-C_OPT, C_GLOUTON = "#2a78d6", "#eb6834"
+# Reference palette (dataviz skill): identity per series, text in neutral ink
+C_OPT, C_GREEDY = "#2a78d6", "#eb6834"
 INK, INK_2, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 
 
@@ -42,48 +42,48 @@ def style(ax):
 
 
 # =============================================================================
-# Étape 1 — Tableau du front
+# Step 1: front table
 # =============================================================================
 def front_table(milp: pd.DataFrame, gap_tol: float) -> pd.DataFrame:
     d = milp.sort_values("budget").reset_index(drop=True)
-    f = pd.DataFrame({"budget": d.budget, "glouton": d.glouton, "cout": d.cout,
-                      "n_radar": d.n_radar, "n_camera": d.n_camera, "hauteurs": d.hauteurs})
-    f["lb"] = np.maximum.accumulate(np.maximum(d.milp, d.glouton))
+    f = pd.DataFrame({"budget": d.budget, "greedy": d.greedy, "cost": d.cost,
+                      "n_radar": d.n_radar, "n_camera": d.n_camera, "heights": d.heights})
+    f["lb"] = np.maximum.accumulate(np.maximum(d.milp, d.greedy))
     f["ub"] = np.minimum.accumulate(d.ub[::-1])[::-1].to_numpy()
-    f["lb_brut"], f["ub_brut"] = d.milp, d.ub
-    f["ecart_certifie"] = (f.ub - f.lb) / f.ub
-    f["perte_glouton"] = (f.lb - f.glouton) / f.lb          # perte prouvée (vs meilleure connue)
-    f["perte_glouton_max"] = (f.ub - f.glouton) / f.ub      # perte possible (vs borne)
-    f["certifie"] = f.ecart_certifie <= gap_tol + 1e-12
-    f["gain_marginal"] = f.lb.diff() / f.budget.diff()      # couverture par unité de budget
+    f["lb_raw"], f["ub_raw"] = d.milp, d.ub
+    f["certified_gap"] = (f.ub - f.lb) / f.ub
+    f["greedy_loss"] = (f.lb - f.greedy) / f.lb            # proven loss (vs best known)
+    f["greedy_loss_max"] = (f.ub - f.greedy) / f.ub        # possible loss (vs bound)
+    f["certified"] = f.certified_gap <= gap_tol + 1e-12
+    f["marginal_gain"] = f.lb.diff() / f.budget.diff()     # coverage per budget unit
 
-    # Solutions non dominées : aucun autre point n'a un coût ≤ et une couverture ≥
-    pts = d[["cout", "milp"]].to_numpy()
-    f["non_dominee"] = [not np.any((pts[:, 0] <= c + 1e-9) & (pts[:, 1] > v + 1e-9))
-                        for c, v in pts]
+    # Non-dominated solutions: no other point has a cost ≤ and a coverage ≥
+    pts = d[["cost", "milp"]].to_numpy()
+    f["non_dominated"] = [not np.any((pts[:, 0] <= c + 1e-9) & (pts[:, 1] > v + 1e-9))
+                          for c, v in pts]
     return f
 
 
 # =============================================================================
-# Étape 2 — Figures
+# Step 2: figures
 # =============================================================================
 def plot_front(f: pd.DataFrame, path):
     fig, ax = plt.subplots(figsize=(8, 4.8), dpi=150)
     style(ax)
     ax.fill_between(f.budget, 100 * f.lb, 100 * f.ub, step="post", color=C_OPT, alpha=0.18,
-                    lw=0, label="Optimum certifié ∈ [LB, UB]")
-    ax.step(f.budget, 100 * f.lb, where="post", color=C_OPT, lw=2, label="Meilleure solution (LB)")
-    ax.step(f.budget, 100 * f.glouton, where="post", color=C_GLOUTON, lw=2,
-            label="Glouton au ratio")
-    # Paliers radar : annotés sur la courbe optimale, au premier budget de chaque palier
-    first = f.drop_duplicates("n_radar")
+                    lw=0, label="Certified optimum ∈ [LB, UB]")
+    ax.step(f.budget, 100 * f.lb, where="post", color=C_OPT, lw=2, label="Best solution (LB)")
+    ax.step(f.budget, 100 * f.greedy, where="post", color=C_GREEDY, lw=2,
+            label="Ratio greedy")
+    # Radar steps: annotated on the optimal curve, at the first budget of each step
+    first = f.drop_duplicates("n_radar") if f.n_radar.max() > 0 else f.iloc[:0]   # cameras only
     for _, r in first.iterrows():
         ax.annotate(f"{int(r.n_radar)} radar{'s' if r.n_radar > 1 else ''}",
                     (r.budget, 100 * r.lb), xytext=(4, 6), textcoords="offset points",
                     fontsize=8.5, color=INK_2)
-    ax.set_xlabel("Budget (unités de coût)")
-    ax.set_ylabel("Couverture pondérée espérée (%)")
-    ax.set_title("Couverture en fonction du budget", loc="left", fontsize=12, color=INK)
+    ax.set_xlabel("Budget (cost units)")
+    ax.set_ylabel("Expected weighted coverage (%)")
+    ax.set_title("Coverage against budget", loc="left", fontsize=12, color=INK)
     ax.set_ylim(0, 100)
     ax.set_xlim(f.budget.min(), f.budget.max())
     ax.legend(frameon=False, fontsize=9, loc="lower right", labelcolor=INK_2)
@@ -92,27 +92,27 @@ def plot_front(f: pd.DataFrame, path):
     plt.close(fig)
 
 
-def plot_ecarts(f: pd.DataFrame, gap_tol: float, path):
-    """Deux panneaux, un seul axe chacun : perte du glouton, écart restant à certifier."""
+def plot_gaps(f: pd.DataFrame, gap_tol: float, path):
+    """Two panels, one axis each: greedy loss, gap left to certify."""
     fig, (a1, a2) = plt.subplots(2, 1, figsize=(8, 5.2), dpi=150, sharex=True)
     for ax in (a1, a2):
         style(ax)
     w = 0.7
-    a1.bar(f.budget, 100 * f.perte_glouton, width=w, color=C_GLOUTON,
-           label="Perte prouvée (vs meilleure solution)")
-    a1.bar(f.budget, 100 * (f.perte_glouton_max - f.perte_glouton), bottom=100 * f.perte_glouton,
-           width=w, color=C_GLOUTON, alpha=0.3, label="Perte possible (jusqu'à la borne UB)")
-    a1.set_ylabel("Perte du glouton (%)")
-    a1.set_title("Ce que coûte l'heuristique, et ce qui reste à prouver", loc="left",
+    a1.bar(f.budget, 100 * f.greedy_loss, width=w, color=C_GREEDY,
+           label="Proven loss (vs best solution)")
+    a1.bar(f.budget, 100 * (f.greedy_loss_max - f.greedy_loss), bottom=100 * f.greedy_loss,
+           width=w, color=C_GREEDY, alpha=0.3, label="Possible loss (up to the UB bound)")
+    a1.set_ylabel("Greedy loss (%)")
+    a1.set_title("What the heuristic costs, and what remains to be proven", loc="left",
                  fontsize=12, color=INK)
     a1.legend(frameon=False, fontsize=8.5, labelcolor=INK_2)
 
-    a2.bar(f.budget, 100 * f.ecart_certifie, width=w, color=C_OPT)
+    a2.bar(f.budget, 100 * f.certified_gap, width=w, color=C_OPT)
     a2.axhline(100 * gap_tol, color=INK_2, lw=1, ls="--")
-    a2.annotate(f"cible {100 * gap_tol:.1f} %", (f.budget.min(), 100 * gap_tol),
+    a2.annotate(f"target {100 * gap_tol:.1f} %", (f.budget.min(), 100 * gap_tol),
                 xytext=(0, 3), textcoords="offset points", fontsize=8.5, color=INK_2)
-    a2.set_ylabel("Écart certifié (%)")
-    a2.set_xlabel("Budget (unités de coût)")
+    a2.set_ylabel("Certified gap (%)")
+    a2.set_xlabel("Budget (cost units)")
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)
@@ -121,17 +121,17 @@ def plot_ecarts(f: pd.DataFrame, gap_tol: float, path):
 def plot_convergence(conv: pd.DataFrame, budgets, path):
     fig, ax = plt.subplots(figsize=(8, 4.2), dpi=150)
     style(ax)
-    greys = ["#2a78d6", "#1baf7a", "#eb6834", "#4a3aa7"]   # 4 premières teintes catégorielles
-    for B, col in zip(budgets, greys):
+    colors = ["#2a78d6", "#1baf7a", "#eb6834", "#4a3aa7"]   # first 4 categorical hues
+    for B, col in zip(budgets, colors):
         h = conv[conv.budget == B]
         if h.empty:
             continue
-        ax.plot(h.temps_s, 100 * h.ecart.clip(lower=1e-4), marker="o", ms=4, lw=2, color=col,
+        ax.plot(h.time_s, 100 * h.gap.clip(lower=1e-4), marker="o", ms=4, lw=2, color=col,
                 label=f"B = {B:g}")
     ax.set_yscale("log")
-    ax.set_xlabel("Temps de calcul (s)")
-    ax.set_ylabel("Écart certifié (%, log ; 0 affiché à 0,01)")
-    ax.set_title("Convergence de la décomposition", loc="left", fontsize=12, color=INK)
+    ax.set_xlabel("Computation time (s)")
+    ax.set_ylabel("Certified gap (%, log; 0 shown at 0.01)")
+    ax.set_title("Convergence of the decomposition", loc="left", fontsize=12, color=INK)
     ax.legend(frameon=False, fontsize=9, labelcolor=INK_2)
     fig.tight_layout()
     fig.savefig(path)
@@ -139,15 +139,15 @@ def plot_convergence(conv: pd.DataFrame, budgets, path):
 
 
 # =============================================================================
-# Étape 3 — Orchestration
+# Step 3: orchestration
 # =============================================================================
 def main() -> None:
     from src.site import ROOT, load_config
 
     cfg = load_config()
-    oc = cfg["optimisation"]
+    oc = cfg["optimization"]
     out = ROOT / oc["out_dir"]
-    gap_tol = oc["milp"]["ecart_cible"]
+    gap_tol = oc["milp"]["target_gap"]
     milp = pd.read_csv(out / "milp.csv")
     conv = pd.read_csv(out / "milp_convergence.csv")
 
@@ -157,25 +157,25 @@ def main() -> None:
     figs.mkdir(parents=True, exist_ok=True)
 
     plot_front(f, figs / "front.png")
-    plot_ecarts(f, gap_tol, figs / "ecarts.png")
-    # Budgets qui ont réellement itéré : le plus rapide à converger, 12, 18 et le pire écart
+    plot_gaps(f, gap_tol, figs / "gaps.png")
+    # Budgets that really iterated: the fastest to converge, 12, 18 and the worst gap
     it = conv.groupby("budget").iteration.max()
-    worst = f.nlargest(1, "ecart_certifie").budget.tolist()
+    worst = f.nlargest(1, "certified_gap").budget.tolist()
     plot_convergence(conv, sorted({it[it >= 3].index.min(), 12.0, 18.0, *worst}),
                      figs / "convergence.png")
 
     pd.set_option("display.width", 200)
-    cols = ["budget", "glouton", "lb", "ub", "ecart_certifie", "perte_glouton",
-            "gain_marginal", "n_radar", "n_camera", "hauteurs"]
+    cols = ["budget", "greedy", "lb", "ub", "certified_gap", "greedy_loss",
+            "marginal_gain", "n_radar", "n_camera", "heights"]
     print(f[cols].round(4).to_string(index=False))
-    print(f"\nBudgets certifiés (écart ≤ {100 * gap_tol:.1f} %) : "
-          f"{f.certifie.sum()}/{len(f)} ; écart max {100 * f.ecart_certifie.max():.2f} % "
-          f"(B = {f.budget[f.ecart_certifie.idxmax()]:g})")
-    print(f"Perte prouvée du glouton : max {100 * f.perte_glouton.max():.1f} % "
-          f"(B = {f.budget[f.perte_glouton.idxmax()]:g}), médiane "
-          f"{100 * f.perte_glouton.median():.2f} %")
-    tight = (f.lb_brut < f.lb - 1e-9) | (f.ub_brut > f.ub + 1e-9)
-    print(f"Bornes resserrées par monotonie : {tight.sum()} budgets")
+    print(f"\nCertified budgets (gap ≤ {100 * gap_tol:.1f} %): "
+          f"{f.certified.sum()}/{len(f)}; max gap {100 * f.certified_gap.max():.2f} % "
+          f"(B = {f.budget[f.certified_gap.idxmax()]:g})")
+    print(f"Proven greedy loss: max {100 * f.greedy_loss.max():.1f} % "
+          f"(B = {f.budget[f.greedy_loss.idxmax()]:g}), median "
+          f"{100 * f.greedy_loss.median():.2f} %")
+    tight = (f.lb_raw < f.lb - 1e-9) | (f.ub_raw > f.ub + 1e-9)
+    print(f"Bounds tightened by monotonicity: {tight.sum()} budgets")
     print(f"-> {out}")
 
 

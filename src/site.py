@@ -1,15 +1,13 @@
 """
-src/site.py — Définition et dérivation du site à protéger.
+src/site.py: definition and derivation of the site to protect.
 
-Entrée  : data/site/site.gpkg (perimetre, zones, acces), dessiné dans QGIS.
-Sorties : site_derive.gpkg, grid.yaml, poids.csv, site.png (chemins dans config.yaml).
+Input   : data/site/site.gpkg (perimeter, zones, access), drawn in QGIS.
+Outputs : site_derived.gpkg, grid.yaml, weights.csv, site.png (paths in config.yaml).
 
 Usage   : python -m src.site
 """
 from __future__ import annotations
 
-import copy
-import os
 import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -22,138 +20,53 @@ import yaml
 from pyproj import CRS
 
 ROOT = Path(__file__).resolve().parents[1]
-LAYERS = ("perimetre", "zones", "acces")
-VALID_TYPES = {"batiment", "equipement", "peripherie"}
-ASSET_TYPES = {"batiment", "equipement"}
+LAYERS = ("perimeter", "zones", "access")
+VALID_TYPES = {"building", "equipment", "periphery"}
+ASSET_TYPES = {"building", "equipment"}
+
+# Sites drawn with an early version of the project use French layer, field and type names.
+# They are read transparently; new sites should use the English schema above.
+LEGACY_LAYERS = {"perimetre": "perimeter", "acces": "access"}
+LEGACY_FIELDS = {"nom": "name", "niveau": "level", "poids": "weight",
+                 "cible_intrus": "intruder_target", "type_cloture": "fence_type"}
+LEGACY_TYPES = {"batiment": "building", "equipement": "equipment", "peripherie": "periphery"}
 
 
 
 # =============================================================================
-# Étape 1 — Configuration et chargement
+# Step 1: configuration and loading
 # =============================================================================
-ENV_SITE = "LIDAR_SITE"   # site actif : nom (data/sites/<nom>) ou chemin d'un dossier ; vide = référence
-EXT_LAZ = (".laz", ".las")
-
-
-def dossier_site(site: str, root: Path = ROOT, dossier: str = "data/sites") -> Path:
-    """Nom -> root/data/sites/<nom> ; chemin (contient un séparateur, ~ ou existe) -> ce dossier."""
-    p = Path(site).expanduser()
-    if p.is_absolute() or os.sep in site or "/" in site or site.startswith("~"):
-        return p.resolve()
-    return (root / dossier / site).resolve()
-
-
-def tuiles(d: Path) -> list[Path]:
-    """Tuiles LAZ/LAS d'un dossier (sans les index .copc.laz créés par QGIS)."""
-    return sorted(p for p in d.glob("*") if p.suffix.lower() in EXT_LAZ
-                  and not p.name.lower().endswith(".copc.laz"))
-
-
-def load_config(path: Path = ROOT / "config.yaml", site: str | None = None) -> dict:
-    """Configuration du site actif.
-
-    Sans site (ni argument, ni variable LIDAR_SITE) : config.yaml tel quel, site de référence.
-    Avec un site (nom de data/sites/ ou chemin d'un dossier quelconque) :
-      entrées  — <dossier>/site.gpkg ou <dossier>/site/site.gpkg (dessiné dans QGIS),
-                 les tuiles LAZ du dossier s'il en contient (sinon data/raw),
-                 <dossier>/config.yaml s'il existe (surcharges propres au site) ;
-      sorties  — tout dans <dossier>/sorties/ (site/, processed/, figures/) ;
-      réglages — config.yaml, puis multisite.profil, puis <dossier>/config.yaml.
-    """
-    path = Path(path)
+def load_config(path: Path = ROOT / "config.yaml") -> dict:
+    """config.yaml; with sensors.cameras_only, the radars are removed for every stage of the chain."""
     with open(path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
-    site = site if site is not None else os.environ.get(ENV_SITE, "")
-    if not site:
-        return cfg
-
-    root = path.resolve().parent
-    ms = cfg.get("multisite", {})
-    d = dossier_site(site, root, ms.get("dossier", "data/sites"))
-    sources = [p for p in (d / "site.gpkg", d / "site" / "site.gpkg") if p.exists()]
-    if not sources:
-        raise FileNotFoundError(f"site « {site} » : ni {d / 'site.gpkg'} ni "
-                                f"{d / 'site' / 'site.gpkg'} n'existe")
-    cfg = _fusion(cfg, ms.get("profil", {}))
-    surcharge = d / "config.yaml"
-    if surcharge.exists():
-        with open(surcharge, encoding="utf-8") as f:
-            cfg = _fusion(cfg, yaml.safe_load(f) or {})
-
-    sorties = d / ms.get("sous_dossier_sorties", "sorties")
-    cfg = {k: (v if k == "multisite" else _relocaliser(v, sorties)) for k, v in cfg.items()}
-    cfg["site"]["gpkg_source"] = str(sources[0])          # original QGIS, jamais modifié
-    cfg["site"]["gpkg"] = str(sorties / "site" / "site.gpkg")   # copie contrôlée (src.multisite)
-    laz = tuiles(d)
-    if laz:                                               # le dossier apporte ses propres tuiles
-        ext = laz[0].suffix
-        cfg["rasters"]["tiles_glob"] = str(d / f"*{ext}")
-    if laz or cfg.get("lidar", {}).get("data_extent") == "auto":
-        cfg["lidar"]["data_extent"] = emprise_tuiles(laz or tuiles(root / "data/raw"))
-    cfg["site_actif"] = site
-    cfg["site_nom"] = d.name
-    cfg["site_dossier"] = str(d)
-    cfg["site_sorties"] = str(sorties)
+    if cfg["sensors"].get("cameras_only", False):
+        cfg["sensors"]["radars"] = []
     return cfg
 
 
-def emprise_tuiles(paths: list[Path]) -> list[float]:
-    """Emprise commune (union des boîtes) des tuiles, lue dans les en-têtes LAS : rapide."""
-    import laspy
-
-    if not paths:
-        raise FileNotFoundError("aucune tuile LAZ pour calculer l'emprise des données")
-    b = []
-    for p in paths:
-        with laspy.open(p) as r:
-            h = r.header
-            b.append((h.mins[0], h.mins[1], h.maxs[0], h.maxs[1]))
-    b = np.array(b)
-    return [float(b[:, 0].min()), float(b[:, 1].min()), float(b[:, 2].max()), float(b[:, 3].max())]
-
-
-def _fusion(base: dict, surcharge: dict) -> dict:
-    """Fusion récursive : les dictionnaires se fusionnent, tout le reste (listes comprises) remplace."""
-    out = copy.deepcopy(base)
-    for k, v in surcharge.items():
-        out[k] = _fusion(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) \
-            else copy.deepcopy(v)
-    return out
-
-
-def _relocaliser(v, sorties: Path):
-    """Chemins de sortie -> <dossier du site>/sorties/… ; données brutes et externes inchangées.
-
-    data/site/x        -> sorties/site/x        (produits dérivés du site)
-    data/processed/x   -> sorties/processed/x   (toutes les sorties de calcul)
-    figures[/x]        -> sorties/figures[/x]
-    data/raw, data/external : inchangés.
-    """
-    if isinstance(v, dict):
-        return {k: _relocaliser(x, sorties) for k, x in v.items()}
-    if isinstance(v, list):
-        return [_relocaliser(x, sorties) for x in v]
-    if not isinstance(v, str):
-        return v
-    for src, dst in (("data/site/", "site/"), ("data/processed/", "processed/"),
-                     ("figures/", "figures/")):
-        if v.startswith(src):
-            return str(sorties / dst / v[len(src):])
-    if v in ("data/processed", "figures"):
-        return str(sorties / ("processed" if v == "data/processed" else "figures"))
-    return v
-
-
 def _normalize(text) -> str:
-    """'Équipement ' -> 'equipement' : minuscules, sans accents ni espaces."""
+    """'Équipement ' -> 'equipement': lower case, no accents or spaces."""
     text = unicodedata.normalize("NFKD", str(text)).encode("ascii", "ignore").decode()
     return text.strip().lower()
 
+
+def read_layer(gpkg: Path, name: str) -> gpd.GeoDataFrame:
+    """One layer of a site GeoPackage, legacy (French) layer and field names translated."""
+    import pyogrio
+
+    available = {n for n, _ in pyogrio.list_layers(gpkg)}
+    legacy = {v: k for k, v in LEGACY_LAYERS.items()}.get(name)
+    layer = name if name in available or legacy not in available else legacy
+    gdf = gpd.read_file(gpkg, layer=layer)
+    return gdf.rename(columns={k: v for k, v in LEGACY_FIELDS.items() if k in gdf.columns})
+
+
 def load_site(gpkg: Path) -> dict[str, gpd.GeoDataFrame]:
-    layers = {name: gpd.read_file(gpkg, layer=name) for name in LAYERS}
+    layers = {name: read_layer(gpkg, name) for name in LAYERS}
     zones = layers["zones"]
-    zones["type"] = zones["type"].map(_normalize)
-    zones["cible_intrus"] = zones["cible_intrus"].fillna(False).astype(bool)
+    zones["type"] = zones["type"].map(_normalize).replace(LEGACY_TYPES)
+    zones["intruder_target"] = zones["intruder_target"].fillna(False).astype(bool)
     return layers
 
 
@@ -161,37 +74,37 @@ def load_site(gpkg: Path) -> dict[str, gpd.GeoDataFrame]:
 
 
 # =============================================================================
-# Étape 2 — Validation
+# Step 2: validation
 # =============================================================================
 class SiteValidationError(ValueError):
-    """Le site dessiné viole une hypothèse du modèle."""
+    """The drawn site violates an assumption of the model."""
 
 
 def validate_site(layers: dict[str, gpd.GeoDataFrame], crs: str, tol: float) -> None:
     errors: list[str] = []
-    per, zones, acces = layers["perimetre"], layers["zones"], layers["acces"]
+    per, zones, access = layers["perimeter"], layers["zones"], layers["access"]
     expected_epsg = CRS.from_user_input(crs).to_epsg()
 
     for name, gdf in layers.items():
         if gdf.crs is None or gdf.crs.to_epsg() != expected_epsg:
-            errors.append(f"{name} : SCR {gdf.crs} au lieu de {crs}")
+            errors.append(f"{name}: CRS {gdf.crs} instead of {crs}")
         invalid = ~gdf.is_valid
         if invalid.any():
-            errors.append(f"{name} : géométries invalides aux index {gdf.index[invalid].tolist()}")
+            errors.append(f"{name}: invalid geometries at indices {gdf.index[invalid].tolist()}")
 
     if len(per) != 1:
-        errors.append(f"perimetre : {len(per)} entités, 1 attendue")
+        errors.append(f"perimeter: {len(per)} features, 1 expected")
 
-    required = ["nom", "niveau", "poids", "type"]
+    required = ["name", "level", "weight", "type"]
     if zones[required].isna().any().any():
-        errors.append("zones : valeurs manquantes dans " + str(required))
-    if (zones["poids"] <= 0).any():
-        errors.append("zones : tous les poids doivent être > 0")
+        errors.append("zones: missing values in " + str(required))
+    if (zones["weight"] <= 0).any():
+        errors.append("zones: every weight must be > 0")
     unknown = set(zones["type"]) - VALID_TYPES
     if unknown:
-        errors.append(f"zones : types inconnus {unknown}, attendus {VALID_TYPES}")
-    if not zones["cible_intrus"].any():
-        errors.append("zones : aucune zone n'a cible_intrus = True")
+        errors.append(f"zones: unknown types {unknown}, expected {VALID_TYPES}")
+    if not zones["intruder_target"].any():
+        errors.append("zones: no zone has intruder_target = True")
 
     if len(per) == 1:
         P = per.geometry.iloc[0]
@@ -199,34 +112,34 @@ def validate_site(layers: dict[str, gpd.GeoDataFrame], crs: str, tol: float) -> 
         gap = union.symmetric_difference(P).area
         overlap = zones.area.sum() - union.area
         if gap > tol:
-            errors.append(f"partition : {gap:.2f} m² d'écart entre zones et périmètre")
+            errors.append(f"partition: {gap:.2f} m² of gap between zones and perimeter")
         if overlap > tol:
-            errors.append(f"partition : {overlap:.2f} m² de chevauchement entre zones")
-        if len(acces):
-            far = acces.distance(P.boundary) > tol
+            errors.append(f"partition: {overlap:.2f} m² of overlap between zones")
+        if len(access):
+            far = access.distance(P.boundary) > tol
             if far.any():
-                errors.append(f"acces : points hors clôture {acces.loc[far, 'nom'].tolist()}")
+                errors.append(f"access: points off the fence {access.loc[far, 'name'].tolist()}")
 
     if errors:
-        raise SiteValidationError("Site invalide :\n  - " + "\n  - ".join(errors))
+        raise SiteValidationError("Invalid site:\n  - " + "\n  - ".join(errors))
 
 
 
 # =============================================================================
-# Étape 3 — Actifs (cibles de l'intrus, obstacles)
+# Step 3: assets (intruder targets, obstacles)
 # =============================================================================
 def build_assets(zones: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     assets = zones[zones["type"].isin(ASSET_TYPES)].copy()
-    assets["surface_m2"] = assets.area
+    assets["area_m2"] = assets.area
     return assets.reset_index(drop=True)
 
 
 
 # =============================================================================
-# Étape 4 — Surfaces à surveiller : anneaux d'approche + périphérie
+# Step 4: surfaces to watch: approach rings + periphery
 # =============================================================================
 def _polygonal(geom, min_area: float = 1.0):
-    """Garde seulement les parties surfaciques > min_area (supprime lignes et éclats)."""
+    """Keeps only the areal parts > min_area (removes lines and slivers)."""
     parts = [p for p in shapely.get_parts(geom)
              if p.geom_type in ("Polygon", "MultiPolygon") and p.area >= min_area]
     return shapely.MultiPolygon(
@@ -236,8 +149,8 @@ def _polygonal(geom, min_area: float = 1.0):
 
 def build_coverage_zones(assets: gpd.GeoDataFrame, zones: gpd.GeoDataFrame,
                          perimeter, ring_m: float) -> gpd.GeoDataFrame:
-    ground = perimeter.difference(assets.union_all())   # sol surveillable
-    order = assets.sort_values(["poids", "niveau", "nom"], ascending=[False, False, True])
+    ground = perimeter.difference(assets.union_all())   # ground that can be watched
+    order = assets.sort_values(["weight", "level", "name"], ascending=[False, False, True])
 
     rows, claimed = [], shapely.Polygon()
     for _, a in order.iterrows():
@@ -245,19 +158,19 @@ def build_coverage_zones(assets: gpd.GeoDataFrame, zones: gpd.GeoDataFrame,
         ring = _polygonal(ring)
         if ring.is_empty:
             continue
-        rows.append({"source": a["nom"], "role": "approche", "niveau": a["niveau"],
-                     "poids": a["poids"], "geometry": ring})
+        rows.append({"source": a["name"], "role": "approach", "level": a["level"],
+                     "weight": a["weight"], "geometry": ring})
         claimed = claimed.union(ring)
 
-    w_periph = zones.loc[zones["type"] == "peripherie", "poids"].max()
-    rows.append({"source": "peripherie", "role": "peripherie", "niveau": 1,
-                 "poids": w_periph, "geometry": _polygonal(ground.difference(claimed))})
+    w_periph = zones.loc[zones["type"] == "periphery", "weight"].max()
+    rows.append({"source": "periphery", "role": "periphery", "level": 1,
+                 "weight": w_periph, "geometry": _polygonal(ground.difference(claimed))})
     return gpd.GeoDataFrame(rows, crs=assets.crs)
 
 
 
 # =============================================================================
-# Étape 5 — Zone d'étude, couronne de l'intrus, grille
+# Step 5: study area, intruder ring, grid
 # =============================================================================
 @dataclass
 class Grid:
@@ -281,18 +194,18 @@ class Grid:
 
 
 def buffer_auto(perimeter, data_extent, res: float, b_min: float, b_max: float) -> float:
-    """Plus grand tampon ≤ b_max qui tient dans les données (site proche du bord d'une tuile).
+    """Largest buffer <= b_max that fits in the data (site close to the edge of a tile).
 
-    Les rayons de visibilité ne relient que des capteurs du site à des cellules du domaine de
-    l'intrus (site + bande_ext_m) : un tampon de quelques dizaines de mètres suffit au calcul.
+    Visibility rays only connect sensors of the site to cells of the intruder domain
+    (site + outer_band_m): a buffer of a few tens of metres is enough for the computation.
     """
     x0, y0, x1, y1 = perimeter.bounds
     dx0, dy0, dx1, dy1 = data_extent
-    marge = np.floor(min(x0 - dx0, y0 - dy0, dx1 - x1, dy1 - y1) / res) * res - res
-    if marge < b_min:
-        raise SiteValidationError(f"le site est à {marge:.0f} m du bord des données LiDAR "
-                                  f"(minimum {b_min:g} m) : ajoute des tuiles voisines.")
-    return float(min(b_max, marge))
+    margin = np.floor(min(x0 - dx0, y0 - dy0, dx1 - x1, dy1 - y1) / res) * res - res
+    if margin < b_min:
+        raise SiteValidationError(f"the site is {margin:.0f} m from the edge of the LiDAR data "
+                                  f"(minimum {b_min:g} m): add neighbouring tiles.")
+    return float(min(b_max, margin))
 
 
 def build_study_area(perimeter, buffer_m: float, res: float, crs: str,
@@ -306,43 +219,43 @@ def build_study_area(perimeter, buffer_m: float, res: float, crs: str,
     dx0, dy0, dx1, dy1 = data_extent
     if grid.xmin < dx0 or grid.ymin < dy0 or grid.xmax > dx1 or grid.ymax > dy1:
         raise SiteValidationError(
-            f"Emprise {grid.xmin, grid.ymin, grid.xmax, grid.ymax} hors des données "
-            f"{tuple(data_extent)} : réduis study_buffer_m ou ajoute des tuiles.")
-    couronne = zone.difference(perimeter)
-    return zone, couronne, grid
+            f"Extent {grid.xmin, grid.ymin, grid.xmax, grid.ymax} outside the data "
+            f"{tuple(data_extent)}: reduce study_buffer_m or add tiles.")
+    ring = zone.difference(perimeter)
+    return zone, ring, grid
 
 
 
 # =============================================================================
-# Étape 6 — Tableau des poids
+# Step 6: weight table
 # =============================================================================
 def weights_table(cover: gpd.GeoDataFrame) -> pd.DataFrame:
     t = pd.DataFrame(cover.drop(columns="geometry"))
-    t["surface_m2"] = cover.area
-    t["poids_x_surface"] = t["poids"] * t["surface_m2"]
-    t["part_objectif_pct"] = 100 * t["poids_x_surface"] / t["poids_x_surface"].sum()
-    return t.sort_values("part_objectif_pct", ascending=False).round(1)
+    t["area_m2"] = cover.area
+    t["weight_x_area"] = t["weight"] * t["area_m2"]
+    t["objective_share_pct"] = 100 * t["weight_x_area"] / t["weight_x_area"].sum()
+    return t.sort_values("objective_share_pct", ascending=False).round(1)
 
 
 
 # =============================================================================
-# Étape 7 — Figure de contrôle
+# Step 7: check figure
 # =============================================================================
-def plot_site(per, assets, cover, zone, acces, out: Path) -> None:
+def plot_site(per, assets, cover, zone, access, out: Path) -> None:
     import matplotlib.pyplot as plt
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 7))
     gpd.GeoSeries([zone], crs=assets.crs).plot(ax=ax1, facecolor="0.95", edgecolor="0.5")
     per.plot(ax=ax1, facecolor="none", edgecolor="k", lw=1.5)
-    ax1.set_title("Zone d'étude (buffer) et site")
+    ax1.set_title("Study area (buffer) and site")
 
-    cover.plot(ax=ax2, column="poids", cmap="YlOrRd", legend=True,
-               legend_kwds={"label": "poids w (surface à surveiller)"}, edgecolor="white", lw=0.3)
+    cover.plot(ax=ax2, column="weight", cmap="YlOrRd", legend=True,
+               legend_kwds={"label": "weight w (surface to watch)"}, edgecolor="white", lw=0.3)
     assets.plot(ax=ax2, color="0.3")
     per.boundary.plot(ax=ax2, color="k", lw=1.5)
-    if len(acces):
-        acces.plot(ax=ax2, color="tab:blue", marker="^", markersize=60, zorder=5)
-    ax2.set_title("Surfaces pondérées, actifs (gris) et accès (▲)")
+    if len(access):
+        access.plot(ax=ax2, color="tab:blue", marker="^", markersize=60, zorder=5)
+    ax2.set_title("Weighted surfaces, assets (grey) and access points (▲)")
     for ax in (ax1, ax2):
         ax.set_aspect("equal")
         ax.ticklabel_format(useOffset=False, style="plain")
@@ -353,7 +266,7 @@ def plot_site(per, assets, cover, zone, acces, out: Path) -> None:
 
 
 # =============================================================================
-# Étape 8 — Orchestration
+# Step 8: orchestration
 # =============================================================================
 def main() -> None:
     cfg = load_config()
@@ -361,7 +274,7 @@ def main() -> None:
 
     layers = load_site(ROOT / s["gpkg"])
     validate_site(layers, crs, s["tolerance_m"])
-    per_gdf, zones, acces = layers["perimetre"], layers["zones"], layers["acces"]
+    per_gdf, zones, access = layers["perimeter"], layers["zones"], layers["access"]
     perimeter = per_gdf.geometry.iloc[0]
 
     assets = build_assets(zones)
@@ -369,30 +282,30 @@ def main() -> None:
     buffer_m = s["study_buffer_m"]
     if buffer_m == "auto":
         buffer_m = buffer_auto(perimeter, cfg["lidar"]["data_extent"], s["resolution_m"],
-                               cfg["intrus"]["bande_ext_m"] + 20, s.get("study_buffer_max_m", 400))
-        print(f"Tampon de la zone d'étude (auto) : {buffer_m:g} m")
-    zone, couronne, grid = build_study_area(perimeter, buffer_m,
-                                            s["resolution_m"], crs,
-                                            cfg["lidar"]["data_extent"])
+                               cfg["intruder"]["outer_band_m"] + 20, s.get("study_buffer_max_m", 400))
+        print(f"Study area buffer (auto): {buffer_m:g} m")
+    zone, ring, grid = build_study_area(perimeter, buffer_m,
+                                        s["resolution_m"], crs,
+                                        cfg["lidar"]["data_extent"])
 
     out = ROOT / s["output_gpkg"]
     out.unlink(missing_ok=True)
-    assets.to_file(out, layer="actifs")
-    cover.to_file(out, layer="couverture")
-    acces.to_file(out, layer="acces")
-    gpd.GeoDataFrame({"nom": ["zone_etude", "couronne"]},
-                     geometry=[zone, couronne], crs=crs).to_file(out, layer="emprises")
+    assets.to_file(out, layer="assets")
+    cover.to_file(out, layer="coverage")
+    access.to_file(out, layer="access")
+    gpd.GeoDataFrame({"name": ["study_area", "ring"]},
+                     geometry=[zone, ring], crs=crs).to_file(out, layer="extents")
 
     with open(ROOT / s["grid_yaml"], "w", encoding="utf-8") as f:
         yaml.safe_dump(grid.to_dict(), f, sort_keys=False)
 
     table = weights_table(cover)
     table.to_csv(ROOT / s["weights_csv"], index=False)
-    plot_site(per_gdf, assets, cover, zone, acces, ROOT / s["figure"])
+    plot_site(per_gdf, assets, cover, zone, access, ROOT / s["figure"])
 
     print(table.to_string(index=False))
-    print(f"\nGrille : {grid.width} x {grid.height} px à {grid.res} m -> {grid.to_dict()}")
-    print(f"Sorties écrites dans {out.parent}")
+    print(f"\nGrid: {grid.width} x {grid.height} px at {grid.res} m -> {grid.to_dict()}")
+    print(f"Outputs written to {out.parent}")
 
 
 if __name__ == "__main__":

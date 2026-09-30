@@ -9,231 +9,208 @@ paths:
 
 lidar:
   crs: "EPSG:2950"
-  vertical_datum: "CGVD28"   # à confirmer à l'étape 3
+  vertical_datum: "CGVD28"   # to be confirmed in step 3
   data_extent: [295000, 5039000, 297000, 5041000]
 
 site:
-  gpkg: "data/site/site.gpkg"               # dessiné dans QGIS (entrée)
-  output_gpkg: "data/site/site_derive.gpkg" # généré (sortie)
-  grid_yaml: "data/site/grid.yaml"          # emprise calée sur la grille (sortie)
-  weights_csv: "data/site/poids.csv"
+  gpkg: "data/site/site.gpkg"                 # drawn in QGIS (input)
+  output_gpkg: "data/site/site_derived.gpkg"  # generated (output)
+  grid_yaml: "data/site/grid.yaml"            # study extent snapped to the grid (output)
+  weights_csv: "data/site/weights.csv"
   figure: "data/site/site.png"
-  approach_ring_m: 15      # largeur de l'anneau d'approche autour des actifs
-  study_buffer_m: 400      # portée max capteurs + marge
-  resolution_m: 1.0        # résolution des rasters
-  tolerance_m: 0.5         # tolérance géométrique des contrôles
+  approach_ring_m: 15      # width of the approach ring around the assets
+  study_buffer_m: "auto"   # max sensor range + margin: min(study_buffer_max_m, distance to the tile edge)
+  study_buffer_max_m: 400  # (>= intruder.outer_band_m + 20 m, otherwise the site is rejected)
+  resolution_m: 1.0        # raster resolution
+  tolerance_m: 0.5         # geometric tolerance of the checks
 
 rasters:
   tiles_glob: "data/raw/*.LAZ"
   out_dir: "data/processed/rasters"
   chunk_size: 5000000
-  fill_max_distance_px: 100     # rayon max de comblement des trous du MNT/MNS
+  fill_max_distance_px: 100     # max radius for filling holes in the DTM/DSM
   classes:
-    sol: [2]
-    batiment: [6]
-    autre: [1]                  # végétation + objets (non séparés par le MRNF)
-    pont: [17]
-    bruit: [7]                  # exclu de tous les produits
+    ground: [2]
+    building: [6]
+    other: [1]                  # vegetation + objects (not separated by the MRNF)
+    bridge: [17]
+    noise: [7]                  # excluded from every product
 
 validation:
   out_dir: "data/processed/validation"
-  margin_m: 50                   # marge autour du périmètre pour la zone de test PDAL
-  pdal_ref: "data/processed/validation/mnt_pdal.tif"
-  mrnf_ref: "data/external/mnt_mrnf.tif"   # tuile MNT téléchargée sur la carte du MRNF
+  margin_m: 50                   # margin around the perimeter for the PDAL test area
+  pdal_ref: "data/processed/validation/dtm_pdal.tif"
+  mrnf_ref: "data/external/dtm_mrnf.tif"   # DTM tile downloaded from the MRNF map
 
 candidates:
-  output: "data/site/candidats.gpkg"
-  mat:
-    spacing_perimeter_m: 20      # espacement des mâts le long de la clôture
-    inset_m: 1.0                 # recul vers l'intérieur de la clôture
-    spacing_interior_m: 25       # grille de mâts à l'intérieur
+  output: "data/site/candidates.gpkg"
+  mast:
+    spacing_perimeter_m: 20      # mast spacing along the fence
+    inset_m: 1.0                 # setback towards the inside of the fence
+    spacing_interior_m: 25       # grid of interior masts
     min_dist_building_m: 2.0
     heights_m: [4, 6, 8, 10]
     cost_base: 1.0
     cost_per_m: 0.10
-  toit:
-    inset_m: 1.5                 # recul depuis le bord du toit
-    simplify_m: 2.0              # simplification des emprises -> coins
+  roof:
+    inset_m: 1.5                 # setback from the roof edge
+    simplify_m: 2.0              # footprint simplification -> corners
     heights_m: [2, 4]
     cost_base: 0.8
     cost_per_m: 0.10
 
 
-
 viewshed:
-  radius_m: 400            # portée max des capteurs (= study_buffer_m)
-  target_height_m: 1.0     # centre du torse d'un intrus debout
-  veg_min_h_m: 0.3         # sous ce seuil, "autre" = sol (herbe, bordures)
+  radius_m: 400            # max sensor range (clipped to the grid)
+  target_height_m: 1.0     # torso centre of a standing intruder
+  veg_min_h_m: 0.3         # below this threshold, "other" = ground (grass, curbs)
   out_dir: "data/processed/viewshed"
 
 
 sensors:
+  cameras_only: false      # true: no radar anywhere in the chain (rerun from src.coverage onward)
   cameras:
-    - {name: cam_grand_angle, n_h: 1920, n_v: 1080, hfov_deg: 90, ppm_50: 25.0, alpha: 1.0, cost: 1.0}
-    - {name: cam_standard,    n_h: 1920, n_v: 1080, hfov_deg: 60, ppm_50: 25.0, alpha: 1.0, cost: 1.0}
-    - {name: cam_tele,        n_h: 1920, n_v: 1080, hfov_deg: 30, ppm_50: 25.0, alpha: 1.0, cost: 1.3}
+    - {name: cam_wide,     n_h: 1920, n_v: 1080, hfov_deg: 90, ppm_50: 25.0, alpha: 1.0, cost: 1.0}
+    - {name: cam_standard, n_h: 1920, n_v: 1080, hfov_deg: 60, ppm_50: 25.0, alpha: 1.0, cost: 1.0}
+    - {name: cam_tele,     n_h: 1920, n_v: 1080, hfov_deg: 30, ppm_50: 25.0, alpha: 1.0, cost: 1.3}
   camera_azimuths_deg: [0, 45, 90, 135, 180, 225, 270, 315]
   radars:
-    - {name: radar_perimetre, r90_m: 150.0, p_fa: 1.0e-6, elev_max_deg: 15.0, alpha: 0.3, cost: 5.0}
+    - {name: radar_perimeter, r90_m: 150.0, p_fa: 1.0e-6, elev_max_deg: 15.0, alpha: 0.3, cost: 5.0}
   radar_tilts_deg: [0,5,10,15]
 
 coverage:
-  p_min: 0.01                    # P < p_min -> 0 dans la matrice creuse (perte mesurée)
+  p_min: 0.01                    # P < p_min -> 0 in the sparse matrix (measured loss)
   out_dir: "data/processed/coverage"
 
 
-optimisation:
+optimization:
   out_dir: "data/processed/optim"
-  figures_dir: "figures"         # figures versionnées (reprises dans le README)
-  capacite_support:            # nombre max de capteurs par support (c, h)
+  figures_dir: "figures"         # versioned figures (used in the README)
+  support_capacity:              # max number of sensors per support (c, h)
     radar: 1
     camera: 4
   budget:
     min: 2.0
-    max: 30.0
-    pas: 1.0
-  analyse_budgets: [4, 13, 30]  # budgets cartographiés par src.analyse
-  milp:                        # coupes sous-modulaires multi-blocs (src/milp.py)
-    bloc_m: 10.0                 # côté des blocs spatiaux : plus petit = coupes plus fortes, maître plus gros
-    ecart_cible: 5.0e-3          # arrêt quand (UB − LB) / UB ≤ 0,5 %
-    temps_maitre_s: 120          # limite par résolution du maître
-    temps_max_s: 900             # limite par budget
+    max: 40.0
+    step: 1.0
+  analysis_budgets: [4, 13, 30]  # budgets mapped by src.analysis
+  milp:                          # multi-block submodular cuts (src/milp.py)
+    block_m: 10.0                # side of the spatial blocks: smaller = stronger cuts, bigger master
+    target_gap: 5.0e-3           # stop when (UB - LB) / UB <= 0.5 %
+    master_time_s: 120           # limit per master solve
+    max_time_s: 900              # limit per budget
 
 
-intrus:                          # évaluation par l'intrus (docs/formulation.md, §7)
-  out_dir: "data/processed/intrus"
-  bande_ext_m: 30.0              # bande extérieure incluse dans le domaine (0 = cas dégénéré §7.1)
-  cible_contact_m: 1.5           # cible = cellules intérieures à moins de d_t de l'actif cible_intrus
-  vitesse_m_s: 1.5               # marche
-  tau_obs_s: 1.0                 # intervalle entre observations indépendantes (hypothèse)
-  tau_obs_sensibilite_s: [0.5, 1.0, 5.0]
-  t_cloture_s: 10.0              # temps d'escalade du grillage de 2,5 m, exposé (hypothèse)
-  t_portail_s: 3.0               # temps de passage d'un portail fermé (hypothèse)
-  pi_portail: 0.8                # part d'intrus opportunistes (portails seulement) — hypothèse
-  t_reponse_s: [0, 10, 20, 30, 45, 60, 120]   # temps de réponse T_R, détection opportune (§9.1) — hypothèses
-  objectif_nsga: "pire_cas"      # "pire_cas" (p*_F) ou "melange" (D_pi), voir §7.3
+intruder:                        # evaluation by the intruder (docs/formulation.md, §7)
+  out_dir: "data/processed/intruder"
+  outer_band_m: 30.0             # outer band included in the domain (0 = degenerate case §7.1)
+  target_contact_m: 1.5          # target = interior cells closer than d_t to the intruder_target asset
+  speed_m_s: 1.5                 # walking
+  tau_obs_s: 1.0                 # interval between independent observations (assumption)
+  tau_obs_sensitivity_s: [0.5, 1.0, 5.0]
+  t_fence_s: 10.0                # time to climb the fence, exposed (assumption)
+  t_gate_s: 3.0                  # time to get through a closed gate (assumption)
+  pi_gate: 0.8                   # share of opportunistic intruders (gates only), assumption
+  t_response_s: [0, 10, 20, 30, 45, 60, 120]   # response time T_R, timely detection (§9.1), assumptions
+  nsga_objective: "worst_case"   # "worst_case" (p*_F) or "mixture" (D_pi), see §7.3
 
 
-nsga:                            # NSGA-II multi-objectif (src/nsga.py, étape 4.5)
+nsga:                            # multi-objective NSGA-II (src/nsga.py, step 4.5)
   out_dir: "data/processed/nsga"
   population: 100
   generations: 200
-  graines: [1, 2, 3, 4, 5]
-  p_croisement: 0.9
-  amorcage_s3: true              # les 58 solutions MILP et gloutonnes de la semaine 3
-  k_couverture:                  # équipements vus par ≥ k capteurs à P ≥ p_min sur part_min des cellules
+  seeds: [1, 2, 3, 4, 5]
+  p_crossover: 0.9
+  seed_with_week3: true          # the MILP and greedy solutions (src.greedy, src.milp)
+  k_coverage:                    # equipment seen by >= k sensors at P >= p_min on min_share of the cells
     k: 2
     p_min: 0.5
-    part_min: 0.9
-    zones: [4, 5]                # indices de la couche couverture : Gaz Bat.3, Générateur
-    contrainte: false            # true : contrainte de NSGA-II ; false : indicateur seulement
+    min_share: 0.9
+    zones: "equipment"           # approach rings of the equipment (else the target), or indices / names
+    constraint: false            # true: NSGA-II constraint; false: indicator only
 
 
-boucle:                          # boucle adversariale exacte par génération de chemins (§9.2)
-  out_dir: "data/processed/boucle"
-  profil: "F"                    # menace de référence : intrus déterminé
-  theta: [0.5, 0.9, 0.95]        # détection opportune garantie exigée
-  t_reponse_s: [0, 10, 20, 30]   # au-delà de T_min ≈ 30 s : irréalisable (§9.1, proposition 2)
-  theta_produit: [0.9]           # cas où l'on encadre aussi l'optimum sous indépendance
-  chemins_par_iteration: 20      # couloirs disjoints renvoyés par l'intrus à chaque itération
-  temps_maitre_s: 300
-  temps_max_s: 1800              # par cas, fusion « max » (optimum certifié)
-  temps_produit_s: 600           # par cas, fusion « produit » (encadrement)
-  prix:                          # prix de la robustesse certifié : F max libre vs F max robuste
-    - {budget: 16, theta: 0.95, t_reponse_s: 0}
-    - {budget: 19, theta: 0.95, t_reponse_s: 0}
-    - {budget: 20, theta: 0.9, t_reponse_s: 10}
-    - {budget: 30, theta: 0.9, t_reponse_s: 20}
+loop:                            # exact adversarial loop by path generation (§9.2)
+  out_dir: "data/processed/loop"
+  profile: "F"                   # reference threat: determined intruder
+  theta: [0.5, 0.9, 0.95]        # required guaranteed timely detection
+  t_response_s: [0, 10, 20, 30]  # beyond T_min: infeasible (§9.1, proposition 2)
+  theta_product: [0.9]           # cases where the optimum is also bracketed under independence
+  paths_per_iteration: 20        # disjoint corridors returned by the intruder at each iteration
+  master_time_s: 300
+  max_time_s: 1800               # per case, "max" fusion (certified optimum)
+  product_time_s: 600            # per case, "product" fusion (bracket)
+  price:                         # certified price of robustness: max free F vs max robust F
+    - {budget: 16, theta: 0.95, t_response_s: 0}
+    - {budget: 19, theta: 0.95, t_response_s: 0}
+    - {budget: 20, theta: 0.9, t_response_s: 10}
+    - {budget: 30, theta: 0.9, t_response_s: 20}
 
-sensibilite:                     # analyse de sensibilité par regret de décision (§9.3), préenregistrée
-  out_dir: "data/processed/sensibilite"
+sensitivity:                     # sensitivity analysis by decision regret (§9.3), preregistered
+  out_dir: "data/processed/sensitivity"
   theta: 0.9
-  decisions_t_reponse_s: [0, 10] # décisions nominales : optimum certifié de la boucle (fusion max)
-  seuil_stable: 0.10             # stable : tient partout et regret < 10 % de son coût
-  retard:                        # (t_c, t_p) : escalade de la clôture, passage d'un portail (s)
+  decisions_t_response_s: [0, 10] # nominal decisions: certified optimum of the loop ("max" fusion)
+  stable_threshold: 0.10         # stable: holds everywhere and regret < 10 % of its cost
+  delay:                         # (t_c, t_p): fence climb, gate passage (s)
     - [10, 3]                    # nominal
-    - [30, 3]                    # clôture renforcée seule
-    - [30, 30]                   # clôture et portails renforcés
+    - [30, 3]                    # reinforced fence only
+    - [30, 30]                   # reinforced fence and gates
     - [60, 60]
     - [120, 120]
-  retard_t_reponse_s: [10, 30, 60, 120]
-  vitesse_m_s: [1.0, 3.0]        # nominal 1,5 (marche) ; 3,0 = course
-  bande_ext_m: [15, 50]          # nominal 30 ; reconstruit le domaine et A_intrus
-  feuillage: [2, 4]              # α × f pour tous les capteurs (k × f, feuilles) ; reconstruit A_intrus
-  temps_max_s: 1200              # par résolution
+  delay_t_response_s: [10, 30, 60, 120]
+  speed_m_s: [1.0, 3.0]          # nominal 1.5 (walking); 3.0 = running
+  outer_band_m: [15, 50]         # nominal 30; rebuilds the domain and A_intruder
+  foliage: [2, 4]                # α × f for every sensor (k × f, leaves); rebuilds A_intruder
+  max_time_s: 1200               # per solve
 
-surrogate:                       # modèle de substitution : carte de potentiel (docs/formulation.md, §8)
+surrogate:                       # surrogate model: potential map (docs/formulation.md, §8)
   out_dir: "data/processed/surrogate"
-  rayon_m: 150                   # R : portée utile (R90 du radar, caméra télé ≈ 143 m)
-  anneaux_m: [0, 50, 150]        # anneaux de distance (grand angle ≈ 38 m, standard ≈ 67 m)
-  n_secteurs: 8                  # secteurs de 45° centrés sur les azimuts des caméras
-  hauteurs_m: [2, 4, 6, 8, 10]   # au-dessus de la surface opaque (toits : 2-4 m, mâts : 4-10 m)
+  radius_m: 150                  # R: useful range (radar R90, tele camera ≈ 143 m)
+  rings_m: [0, 50, 150]          # distance rings (wide ≈ 38 m, standard ≈ 67 m)
+  n_sectors: 8                   # 45° sectors centred on the camera azimuths
+  heights_m: [2, 4, 6, 8, 10]    # above the opaque surface (roofs: 2-4 m, masts: 4-10 m)
   test:
-    marge_m: 50                  # bloc test = emprise du site + marge
-    tampon_m: 30                 # bande exclue autour du bloc test (autocorrélation des étiquettes)
+    margin_m: 50                 # test block = site extent + margin
+    buffer_m: 30                 # band excluded around the test block (label autocorrelation)
   validation:
-    tuile_m: 100                 # tuiles tirées au hasard hors tampon
-    part: 0.15
-  echantillonnage:
-    n_observateurs: 30000        # entraînement + validation
-    proportions: {toit: 0.25, sol_degage: 0.40, sol_vegetation: 0.35}
-  test_pas_px: 2                 # bloc test calculé exactement un pixel sur deux
-  horizons:                      # horizons denses par pyramide log-polaire (src/horizons.py, 6.1)
-    bandes_m: [0, 10, 25, 50, 100, 150]   # mêmes bandes que B1
-    pas_px: [1, 3, 5, 9, 15]     # côté des blocs (impair) par bande : ≈ constant en nombre de blocs
-  reseau:                        # src/surrogate.py (étape 5.3)
-    base: 16                     # canaux du premier niveau
-    niveaux: 4                   # 1, 2, 4, 8, 16 m
-    dilatations: [2]             # goulot : champ récepteur = 301 px = 2R + 1 (vérifié par un test)
-    tuile_px: 512                # intérieur étiqueté = 512 − 2 × 151 = 210 px
-    lot: 4
+    tile_m: 100                  # tiles drawn at random outside the buffer
+    share: 0.15
+  sampling:
+    n_observers: 30000           # training + validation
+    proportions: {roof: 0.25, open_ground: 0.40, vegetated_ground: 0.35}
+  test_step_px: 2                # test block computed exactly one pixel out of two
+  horizons:                      # dense horizons by log-polar pyramid (src/horizons.py, 6.1)
+    bands_m: [0, 10, 25, 50, 100, 150]   # same bands as B1
+    step_px: [1, 3, 5, 9, 15]    # block side (odd) per band: ≈ constant number of blocks
+  network:                       # src/surrogate.py (step 5.3)
+    base: 16                     # channels of the first level
+    levels: 4                    # 1, 2, 4, 8, 16 m
+    dilations: [2]               # bottleneck: receptive field = 301 px = 2R + 1 (checked by a test)
+    tile_px: 512                 # labelled interior = 512 - 2 × 151 = 210 px
+    batch: 4
     iterations: 3000
     lr: 2.0e-3                   # OneCycle
-    eval_tous: 250               # EAM de validation sur la grille complète
-  reseau_physique:               # src/surrogate_physique.py (étape 6.1) : horizons en entrée
+    eval_every: 250              # validation MAE on the full grid
+  physics_network:               # src/surrogate_physics.py (step 6.1): horizons as input
     base: 32
-    niveaux: 3                   # champ récepteur 85 px : le contexte lointain est dans les horizons
-    dilatations: []
-    tuile_px: 256                # intérieur étiqueté = 256 − 2 × 43 = 170 px
-    lot: 8
+    levels: 3                    # receptive field 85 px: the far context is in the horizons
+    dilations: []
+    tile_px: 256                 # labelled interior = 256 - 2 × 43 = 170 px
+    batch: 8
     iterations: 3000
     lr: 2.0e-3
-    eval_tous: 250
-  decision:                      # validation par la décision (src/catalogue_surrogate.py, 6.3)
-    nms_m: 10                    # espacement minimal entre positions retenues (par type)
-    graine_aleatoire: 42         # catalogue témoin tiré au hasard
-    population: 100              # NSGA-II amorcé par les solutions gloutonnes du catalogue
+    eval_every: 250
+  decision:                      # validation by the decision (src/surrogate_catalog.py, 6.3)
+    nms_m: 10                    # minimal spacing between selected positions (per type)
+    random_seed: 42              # control catalog drawn at random
+    population: 100              # NSGA-II seeded with the greedy solutions of the catalog
     generations: 100
-    graines: [1]
-    reduit:                      # catalogues réduits (src/catalogue_reduit.py, 6.3c)
-      tailles: [5, 10, 20]       # nombre de positions, même proportion mâts / toits que le manuel
-      graines: [1, 2, 3, 4, 5]   # tirages aléatoires et sous-catalogues manuels
-      # --- 6.3d : protocole préenregistré (fixé AVANT exécution, ne pas modifier après coup)
-      protocole: "preenregistre" # "initial" (6.3c) ou "preenregistre" (6.3d)
-      tailles_preenregistre: [5, 10, 15, 20]
-      facteur_espacement: 0.5    # R = 0,5 · √(A_type / K_type)
-      masse_bande: 1.0           # masse de la bande extérieure = masse intérieure
-
-multisite:                       # plusieurs sites dessinés dans QGIS (src/multisite.py, docs/multisite.md)
-  dossier: "data/sites"          # sites rangés dans le dépôt ; un site peut aussi être un dossier quelconque
-  sous_dossier_sorties: "sorties"  # toutes les sorties d'un site : <dossier du site>/sorties/
-  out_dir: "data/processed/multisite"
-  figures_dir: "figures/multisite"
-  reference: "Site Alpha"        # étiquette du site de référence (data/site) dans la comparaison
-  profil:                        # surcharges appliquées à chaque site secondaire (budget de calcul réduit)
-    site:
-      study_buffer_m: "auto"     # ≤ 400 m, réduit si le site est près du bord des tuiles (≥ bande_ext_m + 20)
-    optimisation:
-      milp: {temps_maitre_s: 30, temps_max_s: 120}   # optimum encadré [LB, UB] plutôt que certifié à 0,5 %
-    nsga:
-      graines: [1, 2]
-      k_couverture: {zones: "equipements"}           # résolu par nom : indices propres à chaque site
-    boucle:
-      theta: [0.5, 0.9]
-      t_reponse_s: [0, 10]
-      theta_produit: []
-      temps_max_s: 600
-  comparaison:
-    theta: 0.9                   # coût minimal certifié c(θ, T_R) comparé entre sites
-    t_reponse_s: [0, 10]
-    seuils_p_star: [0.5, 0.9]    # coût minimal du front NSGA-II pour garantir p*_F ≥ seuil
+    seeds: [1]
+    reduced:                     # reduced catalogs (src/reduced_catalog.py, 6.3c)
+      sizes: [5, 10, 20]         # number of positions, same mast / roof ratio as the manual catalog
+      seeds: [1, 2, 3, 4, 5]     # random draws and manual sub-catalogs
+      # --- 6.3d: preregistered protocol (fixed BEFORE running, do not change afterwards)
+      protocol: "preregistered"  # "initial" (6.3c) or "preregistered" (6.3d)
+      preregistered_sizes: [5, 10, 15, 20]
+      spacing_factor: 0.5        # R = 0.5 · √(A_type / K_type)
+      band_mass: 1.0             # mass of the outer band = interior mass
