@@ -5,7 +5,6 @@ Model  : terrain + opaque buildings; semi-transparent vegetation (Beer-Lambert),
          k = -ln(P_gap) / h_veg, P_gap measured on the first LiDAR returns.
 Output : τ per cell. NaN = out of range, inf = blocked, T = exp(-τ) otherwise.
 
-Usage  : python -m src.viewshed C040 4
 """
 from __future__ import annotations
 

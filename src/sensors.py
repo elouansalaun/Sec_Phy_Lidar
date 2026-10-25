@@ -1,11 +1,5 @@
 """
 src/sensors.py: sensor models: from the optical depth τ to the detection probability.
-
-P_det(x) = T(x) · P_sensor(geometry)
-  camera : T = exp(-α_c τ) (one way); exact pinhole; P = TTPF(ppm / ppm_50), EN 62676-4
-  radar  : SNR = SNR_90 (R_90/R)^4 exp(-2 α_r τ) (two way); P = P_fa^(1/(1+SNR)), Swerling I
-
-Usage  : python -m src.sensors C052 4
 """
 from __future__ import annotations
 

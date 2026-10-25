@@ -1,22 +1,5 @@
 """
-src/surrogate_baselines.py: baselines B0, B1 and B2 of the surrogate model (§8.5, step 5.3).
-
-B0: mean of the training labels per stratum (roof, open ground, ground under vegetation),
-    for each (height, ring, sector).
-B1: gradient boosting on hand-crafted local descriptors. For each 45° sector and each
-    distance band (0-10, 10-25, 25-50, 50-100, 100-150 m):
-      - tangent of the opaque horizon angle      max (z_opaque − z_obs) / d
-      - tangent of the vegetation horizon angle  max (z_veg − z_obs) / d
-      - mean vertical optical depth              mean of k · (z_veg − z_opaque)
-      - ground share
-    One row = (observer, height, sector, target ring); the sector is not a variable: the
-    model is rotation invariant by construction.
-B2: the same boosting, on the horizons of the log-polar pyramid (src/horizons.py), computed at
-    each height: the gap B1 − B2 isolates the cost of the block approximation.
-
-Outputs (surrogate.out_dir): baselines_test.npz (predictions), baselines.csv (metrics),
-                             b2.joblib (B2 model, reused by src.surrogate_catalog)
-Usage : python -m src.surrogate_baselines
+src/surrogate_baselines.py: baselines B0, B1 and B2 of the surrogate model.
 """
 from __future__ import annotations
 

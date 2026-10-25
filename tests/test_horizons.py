@@ -6,7 +6,6 @@ Tests of the dense horizons (src/horizons.py) and of the augmentation of the phy
 3. D4 equivariance: rotating the terrain rotates the horizon maps and permutes the sectors,
    exactly like the labels (`transform` = `surrogate.d4`).
 
-Usage : python -m pytest tests/test_horizons.py -v
 """
 import numpy as np
 import pytest

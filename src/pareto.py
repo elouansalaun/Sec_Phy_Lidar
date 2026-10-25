@@ -1,19 +1,6 @@
 """
-src/pareto.py: coverage / cost front: greedy against the certified optimum (step 3.4).
-
+src/pareto.py: coverage / cost front: greedy against the certified optimum.
 Reads the outputs of src.greedy and src.milp, without recomputing anything.
-
-Figures in optimization.figures_dir (versioned), table in optimization.out_dir.
-  - front.png       : coverage against budget, greedy, best solution and [LB, UB] band
-  - gaps.png        : what the greedy loses, and what remains to be certified
-  - convergence.png : certified gap over the iterations for a few budgets
-  - pareto.csv      : front per budget, marginal return, non-dominated solutions
-
-Monotonicity: a solution feasible for B is also feasible for every B' ≥ B, and an upper
-bound for B' also bounds the optimum for every B ≤ B'. We therefore tighten
-LB(B) = max_{B'≤B} LB(B') and UB(B) = min_{B'≥B} UB(B').
-
-Usage : python -m src.pareto
 """
 from __future__ import annotations
 

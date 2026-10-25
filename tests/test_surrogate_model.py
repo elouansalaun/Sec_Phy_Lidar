@@ -4,10 +4,9 @@ Tests of the network and of the augmentation (src/surrogate.py).
 1. Receptive field ≥ 2R + 1 = 301 px, and locality: a pixel far from the field has no influence.
 2. Translation equivariance in evaluation: shifting the input shifts the output.
 3. The D4 augmentation of `surrogate.d4` is EXACTLY the transformation of the labels computed
-   by the kernel on the transformed terrain (link between 5.2 and 5.3).
+   by the kernel on the transformed terrain .
 4. Margin mask: no label in the band where the receptive field is incomplete.
 
-Usage : python -m pytest tests/test_surrogate_model.py -v
 """
 import numpy as np
 import torch

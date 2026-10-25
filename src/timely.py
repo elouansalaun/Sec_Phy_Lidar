@@ -1,23 +1,9 @@
 """
-src/timely.py: timely detection (simplified EASI, docs/formulation.md §9.1).
+src/timely.py: timely detection (simplified EASI).
 
 A detection at v is only useful if the intruder still needs at least T_R seconds (response
 time) to reach the target. We write d(v) for the minimal time from v to the target:
 
-  d(v) = min_{γ : v → V_t} Σ_{e ∈ γ} (ℓ_e / speed + t_×(e))
-
-d does not depend on the sensors: one multi-source Dijkstra from the targets, per profile.
-Masked timely detection:  P̃_v = P_v · 1[d(v) ≥ T_R],  σ̃_v = σ_v · 1[d(v) ≥ T_R].
-
-  p̃* = p*(P̃) is a lower bound on the guaranteed timely detection: along a path, the time
-        really left at u is ≥ d(u), so every node that is useful after masking really is.
-  Upper bound: real timely detection (remaining time measured along the path) on two
-        feasible corridors of G_{p̃*} (the shortest in metres, the fastest).
-  Proposition: if T_R > T_min = min_{s ∈ V_s} d(s), then p̃* = 0 for every layout.
-
-Outputs : intruder/time_remaining.npz, intruder/timely.csv, intruder/timely_stats.csv,
-          figures/time_remaining.png, figures/timely.png
-Usage   : python -m src.timely
 """
 from __future__ import annotations
 

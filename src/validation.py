@@ -4,9 +4,6 @@ src/validation.py: validation of the DTM against two independent references.
 1. PDAL (writers.gdal, binmode) on a test area: checks OUR gridding.
 2. MRNF DTM (official product, other projection): checks the whole chain.
 
-Usage :
-    python -m src.validation pdal      # writes the PDAL pipeline to run
-    python -m src.validation compare   # compares our DTM with the available references
 """
 from __future__ import annotations
 

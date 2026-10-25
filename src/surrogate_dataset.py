@@ -1,27 +1,7 @@
 """
-src/surrogate_dataset.py: exact dataset of the surrogate model (step 5.2).
+src/surrogate_dataset.py: exact dataset of the surrogate model.
 
-Target (docs/formulation.md, §8.2): for an observer o at height h above the opaque surface,
-share of the surface of each (ring, sector) that is visible ground, weighted by the
-transmittance T = exp(-τ):
 
-    V[h, a, s](o) = Σ_{j ∈ ground ∩ bin(a, s)} T_oj  /  |bin(a, s)|        ∈ [0, 1]
-
-τ comes from the same kernel as src/viewshed.py (ray_tau): the labels are exact by construction.
-
-Spatial split (§8.4): test = site extent + margin; excluded buffer around it; validation =
-tiles drawn at random; training = the rest. Only the observers whose disc of radius R fits in
-the grid are kept.
-
-Outputs (surrogate.out_dir):
-  labels.npz   sampled observers (training + validation)
-  test.npz     observers of the test block, every `test_step_px` pixels
-  split.tif    0 training, 1 validation, 2 test, 255 excluded
-  strata.tif   0 roof, 1 open ground, 2 ground under vegetation
-  split.png    check map
-
-Usage : python -m src.surrogate_dataset              (full dataset)
-        python -m src.surrogate_dataset --pilot 200  (timing only, nothing is written)
 """
 from __future__ import annotations
 

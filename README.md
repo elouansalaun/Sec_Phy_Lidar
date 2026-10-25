@@ -49,22 +49,6 @@ flowchart LR
 | 7 | Timely detection (EASI), exact adversarial loop, price of robustness, sensitivity |
 | 8 | Interactive demo |
 
-The mathematical formulation and the proofs are in [`docs/formulation.md`](docs/formulation.md).
-
-## Notebooks
-
-The [`notebooks/`](notebooks) folder walks through each phase with the equations, short code examples and
-figures, on the site of [`data/site`](data/site). They are stored without outputs: run the chain first.
-
-| Notebook | Phase |
-|---|---|
-| [01_site_and_lidar_rasters](notebooks/01_site_and_lidar_rasters.ipynb) | the site drawn in QGIS, point cloud, DTM / DSM / buildings / vegetation, gap fraction |
-| [02_visibility_engine](notebooks/02_visibility_engine.ipynb) | exact ray traversal, optical depth τ, Beer-Lambert, analytical checks |
-| [03_sensor_models](notebooks/03_sensor_models.ipynb) | pinhole camera + TTPF, radar equation + Swerling I, detection maps |
-| [04_coverage_optimisation](notebooks/04_coverage_optimisation.ipynb) | MCLP, submodularity, greedy, certified optimum by submodular cuts |
-| [05_intruder](notebooks/05_intruder.ipynb) | intruder graph, corridor threshold p\*, exposure Λ, NSGA-II front |
-| [06_timely_detection_and_adversarial_loop](notebooks/06_timely_detection_and_adversarial_loop.ipynb) | remaining time d(v), T_min, constraint generation, certified minimal cost |
-| [07_surrogate_model](notebooks/07_surrogate_model.ipynb) | potential V, D4 symmetries, log-polar pyramid |
 
 ## Rigour
 

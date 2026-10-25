@@ -1,11 +1,5 @@
 """
 src/coverage.py: coverage matrix of the MCLP.
-
-Configuration j = (position, height, sensor, azimuth); cell i = ground pixel of a weighted
-coverage zone. A[j, i] = P_det of j on i (sparse: P < p_min -> 0, measured loss).
-
-Outputs : A.npz (CSR), configs.csv, cells.npz, p_max.tif
-Usage   : python -m src.coverage
 """
 from __future__ import annotations
 

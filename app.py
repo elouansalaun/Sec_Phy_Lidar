@@ -1,11 +1,4 @@
-"""
-app.py: interactive demo: optimal surveillance of a site from LiDAR data.
 
-    streamlit run app.py
-
-Fictitious site overlaid on an urban area ; no information about a real sensitive site.
-The logic lives in src/demo.py; this page only displays.
-"""
 from __future__ import annotations
 
 from pathlib import Path

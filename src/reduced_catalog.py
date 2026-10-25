@@ -1,30 +1,6 @@
 """
 src/reduced_catalog.py: reduced catalogs: does the selection matter when candidate positions
-are scarce? (§8.9, step 6.3c)
-
-With many positions, a small site is saturated: a catalog drawn at random can do as well as the
-manual catalog and as B2 (6.3b). Hypothesis: the advantage of an informed selection only shows
-when the number of positions is small. We compare, for K positions (same mast / roof ratio as
-the manual catalog):
-  B2_weighted, oracle_weighted : non-maximum suppression on the weighted score (src.surrogate_catalog)
-  random × seeds               : possible positions drawn at random, same minimal spacing
-  manual_sub × seeds           : K positions drawn from the week 1 manual catalog
-Exact and identical evaluation: matrix on the intruder domain, greedy over the budget grid,
-p*_F and p*_G of each solution (no NSGA-II).
-
-Mode `protocol: "preregistered"` (6.3d, decided BEFORE running, config surrogate.decision.reduced):
-  spacing      R_type = factor · √(A_type / K_type), A_type = area of the possible positions of
-               the type (same R for the selected catalogs AND for the random control)
-  band         exterior cells of the intruder domain added to the weight map, total mass
-               = band_mass × interior mass, spread uniformly
-  catalogs     B2_band (candidate), oracle_band, B2_weighted (no band), random, manual_sub
-  success      mean F of B2_band > max of the random seeds for ≥ 3 of the 4 sizes
-Mode `protocol: "initial"` (6.3c): fixed spacing `nms_m`, no band.
-
-Outputs (surrogate.out_dir/decision): reduced.csv (one row per catalog and budget),
-                                      reduced_summary.csv; figure: figures/decision_reduced.png
-  (preregistered mode: suffix _preregistered on all three)
-Usage : python -m src.reduced_catalog
+are scarce?
 """
 from __future__ import annotations
 

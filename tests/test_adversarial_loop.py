@@ -1,4 +1,4 @@
-"""Tests of the adversarial loop (src/adversarial_loop.py, formulation §9.2): brute force on toy instances."""
+"""Tests of the adversarial loop (src/adversarial_loop.py): brute force on toy instances."""
 import itertools
 
 import numpy as np

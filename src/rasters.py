@@ -1,13 +1,6 @@
 """
 src/rasters.py: base rasters (DTM, DSM, heights, vegetation) on the site grid.
 
-Inputs  : LAZ tiles (data/raw), grid.yaml (produced by src.site).
-Outputs : GeoTIFFs aligned on the grid in data/processed/rasters.
-
-Method  : tiles are read in chunks (laspy), accumulated per pixel (numpy),
-          then the products are built. Constant memory whatever the number of points.
-
-Usage   : python -m src.rasters
 """
 from __future__ import annotations
 

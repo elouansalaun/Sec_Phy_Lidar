@@ -1,13 +1,5 @@
 """
 src/demo.py: logic of the Streamlit demo (app.py), without any interface: testable alone.
-
-Two uses:
-  - browse the solutions already certified (src.adversarial_loop, src.nsga);
-  - evaluate live a layout modified by hand: detection per cell, intruder corridors
-    (p*, p̃*), remaining time d(v), cost, coverage F. One evaluation takes a few tens of
-    milliseconds: the intruder "answers" every sensor added or removed.
-
-Nothing is optimised here: the demo reuses the functions of the computation modules.
 """
 from __future__ import annotations
 

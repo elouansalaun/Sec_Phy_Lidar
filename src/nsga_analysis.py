@@ -1,16 +1,5 @@
 """
-src/nsga_analysis.py: validation and reading of the NSGA-II front (step 4.6).
-
-  1. Validation: projected on (cost, F), no point may exceed the certified upper bound of
-     week 3; the gap to the best known solution measures the quality.
-  2. Stability: hypervolume per generation and per seed.
-  3. Price of robustness: best achievable coverage for a given budget, without
-     constraint and then with p*_F ≥ threshold.
-  4. Are the week 3 solutions dominated by the front?
-
-Outputs (nsga.out_dir): front_global.csv, price_of_robustness.csv, front_nsga.png,
-                        hv.png, price_of_robustness.png
-Usage : python -m src.nsga_analysis
+src/nsga_analysis.py: validation and reading of the NSGA-II front.
 """
 from __future__ import annotations
 

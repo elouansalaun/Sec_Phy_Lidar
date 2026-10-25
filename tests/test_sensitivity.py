@@ -1,4 +1,4 @@
-"""Tests of the sensitivity analysis (src/sensitivity.py, formulation §9.3)."""
+"""Tests of the sensitivity analysis (src/sensitivity.py)."""
 import numpy as np
 import pandas as pd
 import pytest

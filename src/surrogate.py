@@ -1,7 +1,7 @@
 """
-src/surrogate.py: fully convolutional network for the potential map (§8, step 5.3).
+src/surrogate.py: fully convolutional network for the potential map.
 
-Input (5 channels, 1 m, relative elevations -> vertical invariance, §8.2):
+Input (5 channels, 1 m, relative elevations -> vertical invariance):
   0  relief     (DTM − local mean of the DTM over 301 m) / 10
   1  buildings  (z_opaque − DTM) / 10
   2  canopy     (z_veg − z_opaque) / 10
@@ -12,13 +12,9 @@ Output: 80 channels = (height, ring, sector), sigmoid, V ∈ [0, 1] at each pixe
 Architecture: U-Net (Ronneberger et al., 2015) with `levels` downsamplings and a bottleneck of
 dilated convolutions, for a receptive field ≥ 2R + 1 = 301 m (checked by a test).
 Training: tiles drawn at random, exact D4 augmentation (the sectors are permuted with the
-terrain, §8.2), squared loss on the labelled pixels only whose receptive field is complete
+terrain), squared loss on the labelled pixels only whose receptive field is complete
 (more than `margin_px` from the tile edge).
 
-Outputs (surrogate.out_dir): model.pt, history.csv, map.npz (prediction on the whole grid),
-                             surrogate.csv (test metrics, same columns as baselines.csv)
-Usage : python -m src.surrogate train
-        python -m src.surrogate evaluate
 """
 from __future__ import annotations
 

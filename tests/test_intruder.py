@@ -1,4 +1,4 @@
-"""Tests of the intruder metrics (src/intruder.py, formulation §7.8) on synthetic domains."""
+"""Tests of the intruder metrics (src/intruder.py) on synthetic domains."""
 import numpy as np
 import pytest
 from scipy.sparse.csgraph import connected_components

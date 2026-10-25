@@ -4,11 +4,9 @@ Tests of the dataset of the surrogate model (src/surrogate_dataset.py).
 1. Consistency: the `potential` kernel gives back exactly the aggregation of `optical_depth`.
 2. Flat terrain, no vegetation: the whole ground is visible, V = 1 in each bin.
 3. Symmetries of the D4 group: rotating or flipping the terrain permutes the sectors.
-   This is what allows the data augmentation by rotations in 5.3.
+   This is what allows the data augmentation by rotations.
 4. Monotonicity: V does not decrease when the observer goes up.
 5. Split: the site is in the test set, the buffer is respected, the discs are complete.
-
-Usage : python -m pytest tests/test_surrogate_data.py -v
 """
 import numpy as np
 import pytest

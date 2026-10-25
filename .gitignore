@@ -13,3 +13,4 @@ data/external/
 *.qgz
 
 docs/formulation.md
+notebooks

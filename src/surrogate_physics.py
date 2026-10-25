@@ -1,5 +1,5 @@
 """
-src/surrogate_physics.py: physics-informed U-Net, conditional on h (§8.8, step 6.1).
+src/surrogate_physics.py: physics-informed U-Net, conditional on h.
 
 Idea: the raw U-Net (src/surrogate.py) must rebuild the occlusion, a maximum along rays
 divided by the distance, with 3 × 3 convolutions: it underfits. We give it as input the dense
@@ -15,10 +15,7 @@ Input for a height h (166 channels):
 Output: 16 channels = (ring, sector) at this height. One pass per height.
 D4 augmentation: the channels indexed by sector (inputs AND outputs) are permuted with the terrain.
 
-Outputs (surrogate.out_dir): physics_model.pt, physics_history.csv, surrogate_physics.csv,
-                             physics_map.npz
-Usage : python -m src.surrogate_physics train
-        python -m src.surrogate_physics evaluate
+
 """
 from __future__ import annotations
 

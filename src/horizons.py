@@ -1,28 +1,5 @@
 """
-src/horizons.py: dense horizons by log-polar pyramid (step 6.1, §8.8).
-
-For each cell o, each height h and each (distance band b, sector s):
-  opaque horizon     A_o[h, b, s](o) = atan( max_{j ∈ wedge(b,s)} (z_opaque(j) − z_opaque(o) − h) / d_oj )
-  vegetation horizon A_v[h, b, s](o) = same with z_veg
-  (the term −h/d dominates near the observer: a horizon computed at h = 0 is not enough, §8.8)
-  ground share       S[b, s](o)     = mean of the ground mask over the wedge (upper bound of V)
-  opacity            O[b, s](o)     = log(1 + mean over the wedge of k·(z_veg − z_opaque))
-
-Exact computation: 70,680 cells read per position. Pyramid: in band b, we read a square block
-of p_b × p_b cells (p_b odd) every p_b pixels, centred on o + p_b·(i, j): within a band,
-the blocks tile the plane exactly; at the boundaries between bands of different steps, they
-overlap or leave holes (default configuration: 92.7 % of the disc cells covered once, 4.6 % not
-covered, 2.7 % twice; tests/test_horizons.py). Each block carries the max (or the mean) of its
-cells, computed once for the whole grid by a sliding filter. The distance is the one of the
-block centre: the error has NO fixed sign (the highest cell of a block can be closer or farther
-than its centre); it is measured by `python -m src.horizons` (≈ 1° on average, band
-0-10 m exact). Cost: ≈ 1,200 reads per position instead of 70,680; in float32 and on
-contiguous positions (the case of a dense map), ≈ 48 times cheaper than the exact horizon.
-
-The network sees these maps as input channels; the observer at height h, the exact curvature
-of the rays and the vegetation remain its job.
-
-Usage : python -m src.horizons     (measures the cost and the error against the exact horizon)
+src/horizons.py: dense horizons by log-polar pyramid.
 """
 from __future__ import annotations
 

@@ -1,35 +1,5 @@
 """
 src/adversarial_loop.py: exact adversarial loop: optimiser ↔ intruder by path generation
-(docs/formulation.md §9.2).
-
-Linearisation. With s_vj = −ln(1 − P_vj) and s_θ = −ln(1 − θ):
-    P_v ≥ θ  ⇔  Σ_j s_vj x_j ≥ s_θ  ⇔  Σ_j C_vj x_j ≥ 1,   C_vj = min(s_vj / s_θ, 1)
-(the truncation is exact: if a term is truncated, both sides are true; it tightens the
-relaxation and removes s = ∞).
-
-Guaranteed timely detection ≥ θ (given profile, response time T_R):
-    every start → target path contains a node v with d(v) ≥ T_R and z_v = 1,
-    z_v ≤ Σ_j C_vj x_j,  z_v ∈ {0, 1}.
-
-Master   : (C1)-(C4) + z-x links + cuts Σ_{v ∈ γ ∩ V_z} z_v ≥ 1 for the known paths γ.
-           Objective "cost": min Σ a_j x_j + Σ f_s y_s (minimal robust cost c(θ, T_R)).
-           Objective "F"   : max Σ_g η_g with the submodular cuts of src.milp, cost ≤ B.
-Intruder : union-find on u_v = min(Σ_j C_vj x̂_j, 1), masked by d(v) ≥ T_R; if there is a
-           corridor where u < 1, it becomes a cut (several disjoint corridors per iteration).
-The master is a relaxation: its bound is valid at every iteration. Paths are finite in
-number: the loop terminates. When the intruder finds no more corridor, the master's
-solution is feasible, hence optimal (up to the master's gap).
-
-Only the nodes already crossed by a cut carry a variable z: fixing z_v = 0 elsewhere
-changes nothing, since z only appears in the cuts.
-
-Outputs : loop/robust_cost.csv, loop/price_of_robustness.csv, loop/convergence.csv,
-          loop/solutions.csv, figures/robust_cost.png, figures/loop_convergence.png
-Usage   : python -m src.adversarial_loop            (everything)
-          python -m src.adversarial_loop cost       (minimal robust cost only)
-          python -m src.adversarial_loop price      (certified price of robustness only)
-          python -m src.adversarial_loop price 2 3  (only cases 2 and 3 of loop.price)
-          python -m src.adversarial_loop figures    (figures from the CSVs)
 """
 from __future__ import annotations
 

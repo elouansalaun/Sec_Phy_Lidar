@@ -1,4 +1,5 @@
-"""Tests of the timely detection (src/timely.py, formulation §9.1) on synthetic domains."""
+"""Tests of the timely detection (src/timely.py) on synthetic domains."""
+
 import numpy as np
 import pytest
 from scipy import sparse

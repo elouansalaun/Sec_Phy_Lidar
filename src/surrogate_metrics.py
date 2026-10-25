@@ -1,13 +1,7 @@
 """
-src/surrogate_metrics.py: metrics shared by the baselines and the network (§8.5).
+src/surrogate_metrics.py: metrics shared by the baselines and the network.
 
-  accuracy : mean absolute error (MAE) on V, per height, stratum and ring
-  ranking  : Spearman on the total potential V̄_h (mean of the bins weighted by their area)
-  decision : top-K of the positions inside the perimeter, after non-maximum suppression
-             - recall: share of the K best exact positions found again within `tol_m`
-             - regret: 1 − (exact V̄ of the K chosen by the model) / (exact V̄ of the K best)
 
-Usage : python -m src.surrogate_metrics   (figure error against cost of every model, from the CSVs)
 """
 from __future__ import annotations
 

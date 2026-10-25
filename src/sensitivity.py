@@ -1,25 +1,5 @@
 """
-src/sensitivity.py: sensitivity analysis by decision regret (docs/formulation.md §9.3).
-
-Preregistered protocol (`sensitivity` block of config.yaml): we take the nominal decisions
-D_0 and D_10 (certified optima of src.adversarial_loop, θ = 0.9, T_R = 0 or 10 s, max fusion)
-and measure, for each scenario s (one factor at a time):
-
-  holds       p̃*_s(D) ≥ θ
-  c*_s        certified minimal cost under s (same loop)
-  regret      cost(D) − c*_s if D holds (over-sizing)
-  extra cost  c*_s − cost(D) if D does not hold (failure)
-  Jaccard     between D and D*_s, configurations identified by their key
-
-Factors: delay (t_c, t_p) and speed (only d changes); band b and foliage f
-(domain and A_intruder rebuilt by the functions of src.intruder_domain and src.coverage;
-k × f ⇔ α × f because τ is linear in k).
-Delay-response frontier: T_min and c*(θ, T_R) for each (t_c, t_p).
-
-Outputs : sensitivity/regret.csv, sensitivity/frontier.csv,
-          figures/delay_frontier.png, figures/regret.png
-Usage   : python -m src.sensitivity            (≈ 1 to 2 h on 2 cores)
-          python -m src.sensitivity figures    (figures from the CSVs)
+src/sensitivity.py: sensitivity analysis by decision regret.
 """
 from __future__ import annotations
 

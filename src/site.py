@@ -1,10 +1,5 @@
 """
 src/site.py: definition and derivation of the site to protect.
-
-Input   : data/site/site.gpkg (perimeter, zones, access), drawn in QGIS.
-Outputs : site_derived.gpkg, grid.yaml, weights.csv, site.png (paths in config.yaml).
-
-Usage   : python -m src.site
 """
 from __future__ import annotations
 

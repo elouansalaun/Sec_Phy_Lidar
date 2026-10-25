@@ -1,19 +1,5 @@
 """
-src/intruder.py: evaluation of a sensor layout by the intruder (docs/formulation.md, §7.3-7.6).
-
-Two metrics on the graph produced by src.intruder_domain:
-
-  p*  corridor threshold: min_γ max_{v∈γ} P_v. Guaranteed lower bound on the detection of the
-      best path, whatever the correlation along the path (§7.4).
-      Exact computation by union-find: nodes are added by increasing P until start and
-      target are connected.
-  Λ*  exposure: min_γ Σ c_uv, c_uv = (σ_u+σ_v)/2 · (ℓ_uv/v + t_×)/τ_obs, σ = −ln q (§7.5).
-      P_path = 1 − exp(−Λ*). Multi-source Dijkstra.
-
-Each one for two profiles: "F" (determined, crosses anywhere) and "G" (opportunistic,
-gates only). Always m_F ≤ m_G (§7.3).
-
-Usage : python -m src.intruder      (evaluates the MILP solutions of the analysis_budgets)
+src/intruder.py: evaluation of a sensor layout by the intruder.
 """
 from __future__ import annotations
 

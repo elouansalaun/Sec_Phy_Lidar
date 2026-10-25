@@ -1,12 +1,5 @@
 """
-src/analysis.py: where the sensors are, what they see, where the greedy loses (step 3.5).
-
-  - solutions_map.png : P(detection) of the optimal solutions, placed sensors, for 3 budgets
-  - greedy_map.png    : P_optimum − P_greedy per cell, where the greedy loses the most
-  - zones.csv         : weighted coverage per zone, optimum and greedy, share of weak cells
-
-Reads the outputs of src.coverage, src.greedy and src.milp, without recomputing anything.
-Usage : python -m src.analysis
+src/analysis.py: where the sensors are, what they see, where the greedy loses.
 """
 from __future__ import annotations
 

@@ -1,8 +1,6 @@
 """
 Analytical tests of the line-of-sight kernel.
 Each test isolates one term of the model on a synthetic terrain with a known solution.
-
-Usage : python -m pytest tests -v
 """
 import numpy as np
 import pytest

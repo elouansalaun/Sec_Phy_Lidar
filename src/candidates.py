@@ -1,10 +1,5 @@
 """
 src/candidates.py: candidate sensor positions (ground masts, rooftop supports).
-
-Inputs : site.gpkg, site_derived.gpkg (assets), DTM / DSM / height rasters.
-Output : candidates.gpkg, one row per position, with the support elevation and possible heights.
-
-Usage  : python -m src.candidates
 """
 from __future__ import annotations
 

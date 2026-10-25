@@ -1,17 +1,5 @@
 """
-src/intruder_domain.py: domain of the intruder: cells, graph, detection matrix (formulation §7.2).
-
-The domain = interior ground cells (those of cells.npz, same order) + ground cells of an
-outer band of width b. The fence is carried by the edges: an edge "crosses" if its two cells
-are on either side of the perimeter, and it goes "through a gate" if its segment intersects
-the opening of that gate.
-
-A_intruder is computed by the same function as A (coverage.build_matrix): on the interior
-columns, it must reproduce A exactly (non-regression check).
-
-Outputs (intruder.out_dir): domain.npz, graph.npz, A_intruder.npz, intruder_configs.csv,
-                            gates.csv, domain.png
-Usage : python -m src.intruder_domain
+src/intruder_domain.py: domain of the intruder: cells, graph, detection matrix.
 """
 from __future__ import annotations
 

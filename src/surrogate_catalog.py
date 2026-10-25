@@ -1,40 +1,5 @@
 """
-src/surrogate_catalog.py: validation by the decision (§8.9, step 6.3).
-
-Question: does a catalog of candidate positions chosen by the surrogate model B2 give better
-layouts than the catalog made by hand in week 1?
-
-Six catalogs, with the SAME counts as the week 1 catalog (masts and roofs):
-  manual          : data/site/candidates.gpkg (week 1)
-  random          : possible positions drawn at random (what the selection itself is worth)
-  B2, oracle      : non-maximum suppression on the GEOMETRIC potential V̄, predicted by B2 or
-                    exact (6.3). Result: worse than the manual one, because V̄ ignores the weighted zones.
-  B2_weighted, oracle_weighted : same on the WEIGHTED score (6.3b): each bin of V is weighted by
-                    the mass of weight w it contains, computed analytically; the surrogate model
-                    is unchanged, only the knowledge of the site is added.
-
-Possible positions (week 1 rules), on the grid of the test block (step of 2 m):
-  masts : ground inside the perimeter, ≥ `inset_m` from the fence and ≥ `min_dist_building_m`
-          from the buildings; heights 4 to 10 m
-  roofs : roof cells ≥ `inset_m` (roof) from the building edge; heights 2 and 4 m
-Geometric score of a position: max, over its possible heights, of the total potential V̄_h.
-Weighted score: with M_b(o) = Σ_{j ∈ bin b} w_j,
-  radar   R_h(o) = Σ_b M_b(o) · V_{h,b}(o)            (360°)
-  camera  C_h(o) = max_s Σ_a M_{a,s}(o) · V_{h,a,s}(o) (best sector)
-  score(o) = max_h max(R_h / max R, C_h / max C)       (h among the heights of the support;
-                                                       C_h only with sensors.cameras_only)
-Assumption: within a bin, visibility and weight are independent (V_b is a mean over the bin).
-
-For each catalog, everything else is EXACT and identical: matrix on the intruder domain
-(coverage.build_matrix, as in src.intruder_domain), greedy over the budget grid, p*_F and p*_G
-of each solution, then NSGA-II seeded with the greedy solutions of the same catalog.
-
-Outputs (surrogate.out_dir/decision): candidates_<name>.gpkg, greedy_<name>.csv, front_<name>.csv,
-                                      summary.csv; figures: decision_budget.png, decision_front.png,
-                                      decision_map.png
-Usage : python -m src.surrogate_catalog                              (6 catalogs)
-        python -m src.surrogate_catalog B2_weighted oracle_weighted  (subset; the others are
-        read back from decision/ if they have already been evaluated)
+src/surrogate_catalog.py: validation by the decision.
 """
 from __future__ import annotations
 

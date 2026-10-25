@@ -1,16 +1,5 @@
 """
-src/greedy.py: gain/cost ratio greedy for sensor placement (docs/formulation.md, §5).
-
-Marginal gain of every configuration in one sparse product: Δ = A @ (w ⊙ q),
-with q the current probability of non-detection. Marginal cost = sensor
-+ support if it is not open yet. We return the best of the greedy solution
-and the best single sensor (Khuller, Moss and Naor, 1999).
-
-No approximation guarantee here (shared costs, height lock-in):
-the MILP (src/milp.py) certifies the gap.
-
-Outputs : optim/greedy.csv (one row per budget), optim/greedy_solutions.csv
-Usage   : python -m src.greedy
+src/greedy.py: gain/cost ratio greedy for sensor placement.
 """
 from __future__ import annotations
 

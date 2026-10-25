@@ -1,22 +1,5 @@
 """
-src/nsga.py: multi-objective optimisation of the layout: NSGA-II (step 4.5).
-
-Objectives (all minimised by pymoo):  cost,  −F (weighted coverage),  −p*_F (worst case, §7.4).
-Variables: one bit per configuration of A_intruder (including those that only see the
-outside). Constraints (C3), (C4) and budget ≤ B_max held by a repair operator;
-k-coverage of the equipment as an indicator, or as a constraint if nsga.k_coverage.constraint.
-
-Operators adapted to very sparse solutions (≈ 2 to 10 bits out of several thousand):
-  crossover : each configuration of the union of the parents is kept with probability 1/2
-  mutation  : add, remove, random replacement, or neighbourhood (same location:
-              other height, sensor, azimuth or tilt)
-  repair    : random removals (removing "the one with the smallest F gain" would first
-              eliminate the exterior cameras, whose F is zero but which make p*)
-Seeding: the MILP and greedy solutions of week 3 + repaired random individuals.
-
-Outputs (nsga.out_dir): front_<seed>.csv, hv_<seed>.csv
-Usage : python -m src.nsga               (every seed of nsga.seeds)
-        python -m src.nsga 1             (one seed)
+src/nsga.py: multi-objective optimisation of the layout: NSGA-II.
 """
 from __future__ import annotations
 

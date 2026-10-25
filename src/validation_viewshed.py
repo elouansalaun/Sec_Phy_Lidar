@@ -5,8 +5,6 @@ Protocol : same surface (opaque DSM), same heights, no curvature.
            Only difference: exact R3 (ours) vs Wang, Robinson & White 2000 (GDAL).
 Outputs  : comparison.csv (one row per pair) + agreement maps (GeoTIFF).
 
-Usage    : python -m src.validation_viewshed
-           python -m src.validation_viewshed diag C040 4   (diagnosis of one pair)
 """
 from __future__ import annotations
 

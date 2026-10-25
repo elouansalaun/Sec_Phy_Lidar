@@ -1,11 +1,5 @@
 """
-src/instance.py: instance of the placement problem (docs/formulation.md, §1-3).
-
-Gathers what the greedy and the MILP share: data indexed by integers, the exact
-evaluation of F and the check of constraints (C1)-(C4). Both solvers are therefore
-judged by the same function.
-
-Convention: A[j, i] = P_ij (configurations in rows, cells in columns).
+src/instance.py: instance of the placement problem.
 """
 from __future__ import annotations
 

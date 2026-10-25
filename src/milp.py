@@ -1,20 +1,5 @@
 """
-src/milp.py: certified optimum by multi-block submodular cuts (docs/formulation.md, §4).
-
-The compact model with tangent cuts (one variable per cell) is correct but intractable here:
-3.3 M non-zeros, continuous relaxation in 84 s, bound 0.927 against 0.680 feasible at B = 12.
-We therefore solve the exact problem by constraint generation (Nemhauser and Wolsey, 1981):
-
-    F = Σ_g F_g,  F_g(T) = Σ_{i∈g} w_i (1 − Π_{j∈T} (1 − P_ij))   (g: spatial block of cells)
-    For every S, T:  F_g(T) ≤ F_g(S) + Σ_{j∈T∖S} ρ_gj(S),   ρ_gj(S) = Σ_{i∈g} w_i q_i(S) P_ij
-    Master:  max Σ_g η_g   s.t. (C1)-(C4),  η_g ≤ F_g(S_k) + Σ_{j∉S_k} ρ_gj(S_k) x_j  ∀ k, g
-
-The master gives an upper bound on the optimum (HiGHS dual bound); each solution T_k, evaluated
-exactly, gives a lower bound. We add the cut at T_k and start again until the target gap. No
-logarithm, no capping of P, no tangents: the objective is exact.
-
-Outputs : optim/milp.csv, optim/milp_solutions.csv, optim/milp_convergence.csv
-Usage   : python -m src.milp
+src/milp.py: certified optimum by multi-block submodular cuts.
 """
 from __future__ import annotations
 

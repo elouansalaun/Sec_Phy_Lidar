@@ -1,13 +1,5 @@
 """
-src/intruder_evaluation.py: the week 3 solutions against the intruder (step 4.4).
-
-Evaluates every MILP and greedy solution (one budget = one solution) with src.intruder,
-then looks for the solutions that become dominated once the worst case p*_F is added as a
-third criterion (cost ↓, F ↑, p*_F ↑).
-
-Outputs (intruder.out_dir): week3.csv, intruder_budget.png, F_vs_pstar.png,
-                            decoupling_paths.png
-Usage : python -m src.intruder_evaluation
+src/intruder_evaluation.py: the week 3 solutions against the intruder.
 """
 from __future__ import annotations
 

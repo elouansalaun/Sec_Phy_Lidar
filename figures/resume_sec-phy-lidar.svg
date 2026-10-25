@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="100%" height="100%" viewBox="0 0 800 600" version="1.1" xmlns="http://www.w3.org/2000/svg" xml:space="preserve" style="fill-rule:evenodd;clip-rule:evenodd;">
+<rect x="0.5" y="0.5" width="799" height="599" rx="10" ry="10" style="fill:none;stroke:rgb(222,222,216);stroke-width:1px;"/>
+<text x="40" y="58" style="font-family:'Helvetica', Arial, sans-serif;font-size:23px;fill:rgb(26,26,24);">Guarding a Site with Airborne LiDAR</text>
+<text x="760" y="58" text-anchor="end" style="font-family:'Helvetica', Arial, sans-serif;font-size:13px;fill:rgb(142,142,134);">Personal project · 2026</text>
+<text x="40" y="81" style="font-family:'Helvetica', Arial, sans-serif;font-size:12.5px;fill:rgb(107,107,100);">Cameras and radars placed on a 3D LiDAR model so that an intruder who knows the layout is detected, in time.</text>
+<path d="M40,100L760,100" style="fill:none;stroke:rgb(222,222,216);stroke-width:1px;stroke-linecap:round;"/>
+<rect x="40" y="120" width="110" height="52" rx="7" ry="7" style="fill:white;stroke:rgb(222,222,216);stroke-width:1px;"/>
+<path d="M40.5,127L40.5,165" style="fill:none;stroke:rgb(31,95,168);stroke-width:1px;stroke-linecap:round;"/>
+<text x="53" y="143" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(31,95,168);">1</text>
+<text x="65" y="143" style="font-family:'Helvetica', Arial, sans-serif;font-size:13.5px;fill:rgb(26,26,24);">LiDAR</text>
+<text x="53" y="159" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">terrain · canopy</text>
+<path d="M153.5,141.5L158.5,146L153.5,150.5" style="fill:none;stroke:rgb(182,182,174);stroke-width:1.8px;stroke-linecap:round;stroke-linejoin:round;"/>
+<rect x="162" y="120" width="110" height="52" rx="7" ry="7" style="fill:white;stroke:rgb(222,222,216);stroke-width:1px;"/>
+<path d="M162.5,127L162.5,165" style="fill:none;stroke:rgb(31,95,168);stroke-width:1px;stroke-linecap:round;"/>
+<text x="175" y="143" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(31,95,168);">2</text>
+<text x="187" y="143" style="font-family:'Helvetica', Arial, sans-serif;font-size:13.5px;fill:rgb(26,26,24);">Visibility</text>
+<text x="175" y="159" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">ray tracing · foliage</text>
+<path d="M275.5,141.5L280.5,146L275.5,150.5" style="fill:none;stroke:rgb(182,182,174);stroke-width:1.8px;stroke-linecap:round;stroke-linejoin:round;"/>
+<rect x="284" y="120" width="110" height="52" rx="7" ry="7" style="fill:white;stroke:rgb(222,222,216);stroke-width:1px;"/>
+<path d="M284.5,127L284.5,165" style="fill:none;stroke:rgb(31,95,168);stroke-width:1px;stroke-linecap:round;"/>
+<text x="297" y="143" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(31,95,168);">3</text>
+<text x="309" y="143" style="font-family:'Helvetica', Arial, sans-serif;font-size:13.5px;fill:rgb(26,26,24);">Sensors</text>
+<text x="297" y="159" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">pinhole · Swerling</text>
+<path d="M397.5,141.5L402.5,146L397.5,150.5" style="fill:none;stroke:rgb(182,182,174);stroke-width:1.8px;stroke-linecap:round;stroke-linejoin:round;"/>
+<rect x="406" y="120" width="110" height="52" rx="7" ry="7" style="fill:white;stroke:rgb(222,222,216);stroke-width:1px;"/>
+<path d="M406.5,127L406.5,165" style="fill:none;stroke:rgb(14,156,134);stroke-width:1px;stroke-linecap:round;"/>
+<text x="419" y="143" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(14,156,134);">4</text>
+<text x="431" y="143" style="font-family:'Helvetica', Arial, sans-serif;font-size:13.5px;fill:rgb(26,26,24);">Coverage</text>
+<text x="419" y="159" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">greedy · MILP cuts</text>
+<path d="M519.5,141.5L524.5,146L519.5,150.5" style="fill:none;stroke:rgb(182,182,174);stroke-width:1.8px;stroke-linecap:round;stroke-linejoin:round;"/>
+<rect x="528" y="120" width="110" height="52" rx="7" ry="7" style="fill:white;stroke:rgb(222,222,216);stroke-width:1px;"/>
+<path d="M528.5,127L528.5,165" style="fill:none;stroke:rgb(14,156,134);stroke-width:1px;stroke-linecap:round;"/>
+<text x="541" y="143" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(14,156,134);">5</text>
+<text x="553" y="143" style="font-family:'Helvetica', Arial, sans-serif;font-size:13.5px;fill:rgb(26,26,24);">Intruder</text>
+<text x="541" y="159" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">corridors · NSGA-II</text>
+<path d="M641.5,141.5L646.5,146L641.5,150.5" style="fill:none;stroke:rgb(182,182,174);stroke-width:1.8px;stroke-linecap:round;stroke-linejoin:round;"/>
+<rect x="650" y="120" width="110" height="52" rx="7" ry="7" style="fill:white;stroke:rgb(222,222,216);stroke-width:1px;"/>
+<path d="M650.5,127L650.5,165" style="fill:none;stroke:rgb(14,156,134);stroke-width:1px;stroke-linecap:round;"/>
+<text x="663" y="143" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(14,156,134);">6</text>
+<text x="675" y="143" style="font-family:'Helvetica', Arial, sans-serif;font-size:13.5px;fill:rgb(26,26,24);">Certify</text>
+<text x="663" y="159" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">adversarial loop</text>
+<path d="M40.5,180L40.5,186L393.5,186L393.5,180" style="fill:none;stroke:rgb(31,95,168);stroke-width:1.5px;stroke-linecap:round;stroke-linejoin:round;"/>
+<path d="M406.5,180L406.5,186L759.5,186L759.5,180" style="fill:none;stroke:rgb(14,156,134);stroke-width:1.5px;stroke-linecap:round;stroke-linejoin:round;"/>
+<text x="40" y="202" style="font-family:'Helvetica', Arial, sans-serif;font-size:10px;fill:rgb(31,95,168);font-weight:bold;">3D model</text>
+<text x="88.01" y="202" style="font-family:'Helvetica', Arial, sans-serif;font-size:10px;fill:rgb(31,95,168);">· 4 MRNF LiDAR tiles → detection maps per sensor</text>
+<text x="406" y="202" style="font-family:'Helvetica', Arial, sans-serif;font-size:10px;fill:rgb(14,156,134);font-weight:bold;">decision</text>
+<text x="449.57" y="202" style="font-family:'Helvetica', Arial, sans-serif;font-size:10px;fill:rgb(14,156,134);">· every optimum proven or bracketed</text>
+<rect x="40" y="220" width="720" height="46" rx="8" ry="8" style="fill:white;stroke:rgb(222,222,216);stroke-width:1px;"/>
+<path d="M40.5,228L40.5,258" style="fill:none;stroke:rgb(109,74,168);stroke-width:1px;stroke-linecap:round;"/>
+<circle cx="64" cy="243" r="7.5" style="fill:none;stroke:black;stroke-width:1.3px;"/>
+<circle cx="64" cy="243" r="2.2" style="fill:none;stroke:black;stroke-width:1.3px;"/>
+<path d="M64,232L64,236.5" style="fill:none;stroke:black;stroke-width:1.3px;stroke-linecap:round;"/>
+<path d="M64,249.5L64,254" style="fill:none;stroke:black;stroke-width:1.3px;stroke-linecap:round;"/>
+<path d="M53,243L57.5,243" style="fill:none;stroke:black;stroke-width:1.3px;stroke-linecap:round;"/>
+<path d="M70.5,243L75,243" style="fill:none;stroke:black;stroke-width:1.3px;stroke-linecap:round;"/>
+<text x="82" y="239" style="font-family:'Helvetica', Arial, sans-serif;font-size:13px;fill:rgb(26,26,24);">Three questions, three metrics</text>
+<text x="82" y="255" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">covered?  F   →   detected on the worst corridor?  p*   →   detected before the response arrives?  p̃*</text>
+<text x="746" y="247" text-anchor="end" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(142,142,134);">1 m grid · fictitious site</text>
+<rect x="40" y="288" width="355" height="122" rx="8" ry="8" style="fill:rgb(244,244,241);"/>
+<text x="54" y="307" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);letter-spacing:0.2px;">DETECTION p* VS COVERAGE</text>
+<text x="381" y="307" text-anchor="end" style="font-family:'Helvetica', Arial, sans-serif;font-size:9.5px;fill:rgb(142,142,134);">coverage F</text>
+<path d="M326.5,298L326.5,309" style="fill:none;stroke:rgb(26,26,24);stroke-width:1.6px;stroke-linecap:round;"/>
+<text x="54" y="336" style="font-family:'Helvetica', Arial, sans-serif;font-size:11px;fill:rgb(107,107,100);">Budget 9</text>
+<path d="M145,326L310.4,326C312.6,326 314.4,327.8 314.4,330L314.4,335C314.4,337.2 312.6,339 310.4,339L145,339Z" style="fill:rgb(31,95,168);"/>
+<text x="321.4" y="336.5" style="font-family:'Helvetica', Arial, sans-serif;font-size:11.5px;fill:rgb(26,26,24);">99.6%</text>
+<path d="M249.3,323L249.3,342" style="fill:none;stroke:rgb(26,26,24);stroke-width:1.6px;stroke-linecap:round;"/>
+<text x="54" y="355" style="font-family:'Helvetica', Arial, sans-serif;font-size:11px;fill:rgb(107,107,100);">Budget 10</text>
+<path d="M145,345L250.5,345C252.7,345 254.5,346.8 254.5,349L254.5,354C254.5,356.2 252.7,358 250.5,358L145,358Z" style="fill:rgb(31,95,168);"/>
+<text x="261.5" y="355.5" style="font-family:'Helvetica', Arial, sans-serif;font-size:11.5px;fill:rgb(26,26,24);">64%</text>
+<path d="M256.7,342L256.7,361" style="fill:none;stroke:rgb(26,26,24);stroke-width:1.6px;stroke-linecap:round;"/>
+<text x="54" y="374" style="font-family:'Helvetica', Arial, sans-serif;font-size:11px;fill:rgb(26,26,24);">Budget 11</text>
+<path d="M145,364L169.0,364C171.2,364 173.0,365.8 173.0,368L173.0,373C173.0,375.2 171.2,377 169.0,377L145,377Z" style="fill:rgb(180,83,15);"/>
+<text x="180.0" y="374.5" style="font-family:'Helvetica', Arial, sans-serif;font-size:11.5px;fill:rgb(26,26,24);">16%</text>
+<path d="M260.9,361L260.9,380" style="fill:none;stroke:rgb(26,26,24);stroke-width:1.6px;stroke-linecap:round;"/>
+<text x="54" y="393" style="font-family:'Helvetica', Arial, sans-serif;font-size:11px;fill:rgb(107,107,100);">Budget 13</text>
+<path d="M145,383L310.5,383C312.7,383 314.5,384.8 314.5,387L314.5,392C314.5,394.2 312.7,396 310.5,396L145,396Z" style="fill:rgb(31,95,168);"/>
+<text x="321.5" y="393.5" style="font-family:'Helvetica', Arial, sans-serif;font-size:11.5px;fill:rgb(26,26,24);">99.7%</text>
+<path d="M295.3,380L295.3,399" style="fill:none;stroke:rgb(26,26,24);stroke-width:1.6px;stroke-linecap:round;"/>
+<rect x="405" y="288" width="355" height="122" rx="8" ry="8" style="fill:rgb(244,244,241);"/>
+<text x="419" y="307" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);letter-spacing:0.2px;">COST OF 95% TIMELY DETECTION</text>
+<text x="746" y="307" text-anchor="end" style="font-family:'Helvetica', Arial, sans-serif;font-size:9.5px;fill:rgb(142,142,134);">best coverage layout</text>
+<path d="M651.3,298L651.3,309" style="fill:none;stroke:rgb(26,26,24);stroke-width:1.6px;stroke-linecap:round;"/>
+<text x="419" y="336" style="font-family:'Helvetica', Arial, sans-serif;font-size:11px;fill:rgb(107,107,100);">Response 0 s</text>
+<path d="M510,326L553.6,326C555.8,326 557.6,327.8 557.6,330L557.6,335C557.6,337.2 555.8,339 553.6,339L510,339Z" style="fill:rgb(14,156,134);"/>
+<text x="564.6" y="336.5" style="font-family:'Helvetica', Arial, sans-serif;font-size:11.5px;fill:rgb(26,26,24);">5.8</text>
+<path d="M559.2,323L559.2,342" style="fill:none;stroke:rgb(26,26,24);stroke-width:1.6px;stroke-linecap:round;"/>
+<text x="419" y="355" style="font-family:'Helvetica', Arial, sans-serif;font-size:11px;fill:rgb(26,26,24);">Response 10 s</text>
+<path d="M510,345L563.4,345C565.6,345 567.4,346.8 567.4,349L567.4,354C567.4,356.2 565.6,358 563.4,358L510,358Z" style="fill:rgb(14,156,134);"/>
+<text x="574.4" y="355.5" style="font-family:'Helvetica', Arial, sans-serif;font-size:11.5px;fill:rgb(26,26,24);">7.0</text>
+<path d="M611.7,342L611.7,361" style="fill:none;stroke:rgb(26,26,24);stroke-width:1.6px;stroke-linecap:round;"/>
+<text x="419" y="374" style="font-family:'Helvetica', Arial, sans-serif;font-size:11px;fill:rgb(107,107,100);">Response 20 s</text>
+<path d="M510,364L598.7,364C600.9,364 602.7,365.8 602.7,368L602.7,373C602.7,375.2 600.9,377 598.7,377L510,377Z" style="fill:rgb(14,156,134);"/>
+<text x="609.7" y="374.5" style="font-family:'Helvetica', Arial, sans-serif;font-size:11.5px;fill:rgb(26,26,24);">11.3</text>
+<path d="M683.8,361L683.8,380" style="fill:none;stroke:rgb(26,26,24);stroke-width:1.6px;stroke-linecap:round;"/>
+<text x="419" y="393" style="font-family:'Helvetica', Arial, sans-serif;font-size:11px;fill:rgb(107,107,100);">Response 30 s</text>
+<path d="M510,383L625.7,383C627.9,383 629.7,384.8 629.7,387L629.7,392C629.7,394.2 627.9,396 625.7,396L510,396Z" style="fill:rgb(14,156,134);"/>
+<text x="636.7" y="393.5" style="font-family:'Helvetica', Arial, sans-serif;font-size:11.5px;fill:rgb(26,26,24);">14.6</text>
+<path d="M721.6,380L721.6,399" style="fill:none;stroke:rgb(26,26,24);stroke-width:1.6px;stroke-linecap:round;"/>
+<rect x="40.0" y="434" width="169.5" height="78" rx="8" ry="8" style="fill:rgb(244,244,241);"/>
+<path d="M53.0,448L53.0,464" style="fill:none;stroke:rgb(31,95,168);stroke-width:3px;stroke-linecap:round;"/>
+<text x="64.0" y="466" style="font-family:'Helvetica', Arial, sans-serif;font-size:24px;fill:rgb(26,26,24);">2,290</text>
+<text x="64.0" y="486" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">camera &amp; radar configs</text>
+<text x="64.0" y="500" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">scored on the LiDAR model</text>
+<rect x="223.5" y="434" width="169.5" height="78" rx="8" ry="8" style="fill:rgb(244,244,241);"/>
+<path d="M236.5,448L236.5,464" style="fill:none;stroke:rgb(14,156,134);stroke-width:3px;stroke-linecap:round;"/>
+<text x="247.5" y="466" style="font-family:'Helvetica', Arial, sans-serif;font-size:24px;fill:rgb(26,26,24);">99.3%</text>
+<text x="247.5" y="486" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">viewshed agreement</text>
+<text x="247.5" y="500" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">with GDAL, 99 cases</text>
+<rect x="407.0" y="434" width="169.5" height="78" rx="8" ry="8" style="fill:rgb(244,244,241);"/>
+<path d="M420.0,448L420.0,464" style="fill:none;stroke:rgb(109,74,168);stroke-width:3px;stroke-linecap:round;"/>
+<text x="431.0" y="466" style="font-family:'Helvetica', Arial, sans-serif;font-size:24px;fill:rgb(26,26,24);">91</text>
+<text x="431.0" y="486" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">tests: analytic cases,</text>
+<text x="431.0" y="500" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">invariances, brute force</text>
+<rect x="590.5" y="434" width="169.5" height="78" rx="8" ry="8" style="fill:rgb(244,244,241);"/>
+<path d="M603.5,448L603.5,464" style="fill:none;stroke:rgb(180,83,15);stroke-width:3px;stroke-linecap:round;"/>
+<text x="614.5" y="466" style="font-family:'Helvetica', Arial, sans-serif;font-size:24px;fill:rgb(26,26,24);">−44%</text>
+<text x="614.5" y="486" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">cost vs. coverage-optimal,</text>
+<text x="614.5" y="500" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">10 s response, 95% timely</text>
+<rect x="40.00" y="545" width="52.69" height="21" rx="10.5" ry="10.5" style="fill:rgb(244,244,241);"/>
+<text x="66.34" y="559.28" text-anchor="middle" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">Python</text>
+<rect x="99.69" y="545" width="47.43" height="21" rx="10.5" ry="10.5" style="fill:rgb(244,244,241);"/>
+<text x="123.4" y="559.28" text-anchor="middle" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">PDAL</text>
+<rect x="154.12" y="545" width="55.01" height="21" rx="10.5" ry="10.5" style="fill:rgb(244,244,241);"/>
+<text x="181.63" y="559.28" text-anchor="middle" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">rasterio</text>
+<rect x="216.13" y="545" width="75.46" height="21" rx="10.5" ry="10.5" style="fill:rgb(244,244,241);"/>
+<text x="253.86" y="559.28" text-anchor="middle" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">GeoPandas</text>
+<rect x="298.59" y="545" width="53.85" height="21" rx="10.5" ry="10.5" style="fill:rgb(244,244,241);"/>
+<text x="325.52" y="559.28" text-anchor="middle" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">Numba</text>
+<rect x="359.44" y="545" width="88.84" height="21" rx="10.5" ry="10.5" style="fill:rgb(244,244,241);"/>
+<text x="403.86" y="559.28" text-anchor="middle" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">SciPy · HiGHS</text>
+<rect x="455.28" y="545" width="51.52" height="21" rx="10.5" ry="10.5" style="fill:rgb(244,244,241);"/>
+<text x="481.04" y="559.28" text-anchor="middle" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">pymoo</text>
+<rect x="513.80" y="545" width="57.93" height="21" rx="10.5" ry="10.5" style="fill:rgb(244,244,241);"/>
+<text x="542.76" y="559.28" text-anchor="middle" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">PyTorch</text>
+<rect x="578.73" y="545" width="61.43" height="21" rx="10.5" ry="10.5" style="fill:rgb(244,244,241);"/>
+<text x="609.44" y="559.28" text-anchor="middle" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">Streamlit</text>
+<rect x="647.15" y="545" width="46.25" height="21" rx="10.5" ry="10.5" style="fill:rgb(244,244,241);"/>
+<text x="670.28" y="559.28" text-anchor="middle" style="font-family:'Helvetica', Arial, sans-serif;font-size:10.5px;fill:rgb(107,107,100);">QGIS</text>
+</svg>

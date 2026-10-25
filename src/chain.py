@@ -1,15 +1,5 @@
 """
 src/chain.py: the whole computation chain, in order, on the site of data/site.
-
-Each step is `python -m <module> [args]`, run unchanged; the chain stops at the first failure.
-The main chain goes from the site to the sensitivity analysis; the DTM / viewshed validation and
-the surrogate model (PyTorch) are optional groups.
-
-Usage : python -m src.chain                          main chain
-        python -m src.chain --from milp              from a step (included)
-        python -m src.chain --until coverage         up to a step (included)
-        python -m src.chain --with validation surrogate
-        python -m src.chain --list
 """
 from __future__ import annotations
 
